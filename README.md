@@ -155,13 +155,15 @@ The default workflow follows the state of the project:
 8. Rebuild an isolated Git index from the current tracked entries, without reusing cached file timestamps, then scan the working tree as `git add -A` would. This preserves deliberately staged ignored files, staged removals, and sparse-checkout boundaries while exposing changes hidden by index hints. Show this exact prospective commit tree for confirmation without changing the real staging area.
 9. After commit-message confirmation, recheck the repository, branch, HEAD, origin, account binding, Git index, file contents, and untracked-file set, then run `git add -A`. Require the staged tree and the created commit to match the confirmed files, message, and account identity before pushing that exact commit object to the explicitly named current branch on `origin`. If no commit is created during this run, show the latest local commit message and require a separate confirmation before connecting to GitHub.
 10. Keep optional SSH authentication, account discovery, and read-only repository checks under Advanced features.
-11. If push fails, keep the local commit and explain whether GitHub reported divergent history, an identity or repository rejection, a connection problem, or another exact Git error. Ordinary pushes never use force.
+11. If push fails, keep the local commit and explain whether GitHub reported divergent history, an identity or repository rejection, a connection problem, or another exact Git error. When GitHub has commits missing locally, offer a default-No choice to keep both histories and append the current local version as the newest exact snapshot. Ordinary pushes never use force.
 
 A clean repository creates no unnecessary commit. An empty `git status` is not accepted by itself: the independent full scan must also produce the same tree as `HEAD`. If quick status omits one or several tracked changes, the exact review still includes them together with ordinary changes. A clean sparse checkout is not mistaken for file deletion. If staged and working-tree changes cancel each other, the script stops without altering the existing index. If the repository truly is clean and already contains a local commit, `./g.sh` shows its commit message and asks before any push. An empty repository with no project files stops without attempting a push. Canceling at the commit prompt happens before staging and preserves any changes that were already staged.
 
 If a folder already contains Git metadata that cannot be opened, the script stops instead of initializing over it. Unfinished multi-commit cherry-pick and revert sequences also block ordinary operations, even after an individual conflict has been resolved and committed. New unregistered nested repositories are blocked at any directory depth; correctly registered submodules remain supported, and a failed submodule inspection is not treated as a clean result.
 
-Your confirmed commit message is preserved as entered, including a leading `#`, regardless of Git's message-cleanup preference. Hooks still run; if a hook changes the confirmed message or contents, automatic upload stops.
+Your confirmed commit message is preserved as entered, including a leading `#`, regardless of Git's message-cleanup preference. Hooks still run for normal file commits; if a hook changes the confirmed message or contents, automatic upload stops.
+
+If GitHub rejects a push because its branch contains commits missing locally, the script first leaves both sides untouched. It then offers one optional recovery choice, defaulting to No. Choosing Yes reads the latest remote branch, shows the proposed connecting commit message for confirmation, preserves the remote history as the main line and the existing local history as a second parent, and creates a newest commit whose complete file tree exactly matches the current local version. The retry is a normal fast-forward push: no remote commit is deleted, no force option is used, and no automatic conflict resolution changes files. Canceling either confirmation changes neither history.
 
 ## GitHub account setup
 
@@ -290,7 +292,7 @@ bash tests/test.sh --commit-confirmation
 bash tests/audit-regressions.sh
 ```
 
-Tests use temporary home folders, private profiles, Git repositories, SSH configuration, and simulated SSH transport. They cover the direct push path, full setup, account isolation, versioned commits, and push-failure explanations without using the real private profile or modifying real GitHub repositories.
+Tests use temporary home folders, private profiles, Git repositories, SSH configuration, and simulated SSH transport. They cover the direct push path, full setup, account isolation, versioned commits, push-failure explanations, and remote-history retention without using the real private profile or modifying real GitHub repositories.
 
 ## License
 

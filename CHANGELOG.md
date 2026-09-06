@@ -6,6 +6,24 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.16.1 - 2026-09-06
+
+### Added
+
+- After a normal push is rejected because the remote branch contains commits missing locally, offer a default-No option to retain both histories and append the current local version.
+- When explicitly selected, fetch only the named remote branch, ask for confirmation of the connecting commit message, keep the remote history as the main parent and the existing local history as a second parent, then retry with a normal fast-forward push. The newest commit uses the exact current local file tree; no force push or automatic conflict resolution is used.
+
+### Safety and UX
+
+- Uppercase the shortcut letter for the default choice in every Chinese yes-or-no prompt: `[是(Y)/否(n)，默认是]` and `[是(y)/否(N)，默认否]`. Input remains case-insensitive.
+- Declining the option performs no additional network request and changes neither side. Canceling the commit-message confirmation leaves the local branch unchanged and removes the temporary fetched reference.
+- Recheck the repository binding, exact local commit, complete working snapshot, remote commit, authorship, message, parents, and resulting tree before advancing the local branch or retrying upload. Interrupted reconciliation is identified on the next run.
+- Kept the frozen `g.sh` seed unchanged; existing project launchers receive the feature from the central engine automatically.
+
+### Tests
+
+- Added isolated local-transport coverage for the default-No and commit-message cancellation paths, successful retention of two unrelated histories with the local snapshot published as the newest commit, and rejection messages that must not offer this recovery.
+
 ## 3.15.1 - 2026-09-05
 
 ### Fixed

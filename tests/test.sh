@@ -1712,7 +1712,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.15.1" "$english_version" "English changelog declares release 3.15.1"
+  assert_equal "3.16.1" "$english_version" "English changelog declares release 3.16.1"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then
@@ -2511,7 +2511,7 @@ test_focused_ssh_and_launcher() {
   if [ "$status" -eq 2 ] &&
      [ ! -e "$push_marker" ] &&
      printf '%s\n' "$output" | grep -Fq '最新本地提交说明：baseline' &&
-     printf '%s\n' "$output" | grep -Fq '继续上传到 GitHub 吗？ [是(y)/否(n)，默认否]:' &&
+     printf '%s\n' "$output" | grep -Fq '继续上传到 GitHub 吗？ [是(y)/否(N)，默认否]:' &&
      ! printf '%s\n' "$output" | grep -Fq '当前分支：'; then
     pass "Simplified Chinese confirmation is concise and clearly labels the commit message"
   else
@@ -2537,7 +2537,9 @@ test_focused_ssh_and_launcher() {
   status=0
   push_current_branch true > "$push_marker" 2>&1 || status=$?
   if [ "$status" -ne 0 ] &&
-     grep -Fq 'GitHub has commits on main' "$push_marker"; then
+     grep -Fq 'GitHub has commits on main' "$push_marker" &&
+     grep -Fq 'Keep the remote history and append this local version? [y/N]:' "$push_marker" &&
+     grep -Fq 'The local commit and remote history remain unchanged.' "$push_marker"; then
     pass "live push progress preserves Git's failure status and detailed explanation"
   else
     fail_test "live push progress preserves Git's failure status and detailed explanation"

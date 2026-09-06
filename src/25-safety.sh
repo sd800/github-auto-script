@@ -14,6 +14,7 @@ WORKFLOW_EXPECTED_ORIGINAL_INDEX_TREE=""
 WORKFLOW_EXPECTED_HEAD_TREE=""
 WORKFLOW_SPARSE_CHECKOUT=false
 WORKFLOW_PUSH_REFERENCE=""
+WORKFLOW_REMOTE_REFERENCE=""
 WORKFLOW_TRANSACTION_ACTIVE=false
 WORKFLOW_CHECKPOINT_ACTIVE=false
 WORKFLOW_EXPECTED_ROOT=""
@@ -89,6 +90,11 @@ report_previous_workflow_state() {
       warn \
         "A previous $SCRIPT_NAME run ended while Git was pushing to GitHub." \
         "上一次运行 ${SCRIPT_NAME} 时，在 Git 上传到 GitHub 的过程中提前结束了。"
+      ;;
+    reconciling)
+      warn \
+        "A previous $SCRIPT_NAME run ended while connecting local and remote history." \
+        "上一次运行 ${SCRIPT_NAME} 时，在衔接本机与远端提交记录的过程中提前结束了。"
       ;;
     *)
       warn \
@@ -203,6 +209,10 @@ cleanup_workflow_runtime() {
   if [ -n "$WORKFLOW_PUSH_REFERENCE" ]; then
     git -C "$GIT_ROOT" update-ref -d "$WORKFLOW_PUSH_REFERENCE" >/dev/null 2>&1 || true
     WORKFLOW_PUSH_REFERENCE=""
+  fi
+  if [ -n "$WORKFLOW_REMOTE_REFERENCE" ]; then
+    git -C "$GIT_ROOT" update-ref -d "$WORKFLOW_REMOTE_REFERENCE" >/dev/null 2>&1 || true
+    WORKFLOW_REMOTE_REFERENCE=""
   fi
   release_workflow_lock
 }

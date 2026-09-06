@@ -1412,6 +1412,7 @@ prepare_and_commit() {
 
 push_current_branch() {
   local confirmed_commit_created_this_run="${1:-false}"
+  local allow_history_append="${2:-yes}"
   local branch=""
   local push_head=""
   local latest_commit_message=""
@@ -1518,6 +1519,10 @@ push_current_branch() {
   fi
   if [ "$push_status" -ne 0 ]; then
     explain_push_failure "$output" "$branch"
+    if [ "$allow_history_append" = yes ] && push_rejection_is_remote_ahead "$output"; then
+      append_current_version_to_remote_history "$branch" "$push_head"
+      return $?
+    fi
     return 1
   fi
   if ! git -C "$GIT_ROOT" config --local "branch.$branch.remote" origin ||
@@ -1531,6 +1536,231 @@ push_current_branch() {
     "已使用账号 $BOUND_USERNAME 上传到 ${CURRENT_REPOSITORY_OWNER}/${CURRENT_REPOSITORY_NAME}。"
 }
 
+push_rejection_is_remote_ahead() {
+  local normalized=""
+
+  normalized="$(lowercase "$1")"
+  case "$normalized" in
+    *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do\ not*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+clear_remote_history_reference() {
+  if [ -n "$WORKFLOW_REMOTE_REFERENCE" ]; then
+    git -C "$GIT_ROOT" update-ref -d "$WORKFLOW_REMOTE_REFERENCE" >/dev/null 2>&1 || true
+    WORKFLOW_REMOTE_REFERENCE=""
+  fi
+}
+
+verify_clean_current_snapshot() {
+  local expected_tree="$1"
+  local result=0
+
+  if ! prepare_expected_staged_tree; then
+    clear_workflow_review_snapshot
+    return 1
+  fi
+  if [ "$WORKFLOW_EXPECTED_ORIGINAL_INDEX_TREE" != "$expected_tree" ] ||
+     [ "$WORKFLOW_EXPECTED_STAGED_TREE" != "$expected_tree" ]; then
+    result=1
+  fi
+  clear_workflow_review_snapshot
+  return "$result"
+}
+
+append_current_version_to_remote_history() {
+  local branch="$1"
+  local local_head="$2"
+  local local_tree=""
+  local remote_head=""
+  local remote_reference=""
+  local proposed_message=""
+  local new_commit=""
+  local commit_status=0
+
+  heading \
+    "Keep the remote history and append this version" \
+    "保留远端历史并追加当前版本"
+  muted \
+    "GitHub's existing $branch history and this repository's local history will both remain. The newest commit will keep the current local files exactly as they are, and the upload will not use force." \
+    "GitHub 上现有的 ${branch} 历史和当前仓库的本机历史都会保留。最新提交中的文件将与当前本机版本完全一致，上传过程不会使用强制推送。"
+  muted \
+    "If you continue, the script will first read the latest remote commit, then ask you to confirm the connecting commit message before changing the local branch." \
+    "选择继续后，脚本会先读取远端最新提交，再请你确认用于衔接两边历史的提交说明；在确认之前，不会改动本机分支。"
+  if ! ui_prompt_yes_no \
+    "Keep the remote history and append this local version?" \
+    "要保留远端历史，并把当前本机版本追加为最新版本吗？" \
+    "no"; then
+    warn \
+      "This option was not used. The local commit and remote history remain unchanged." \
+      "没有执行这项操作；本机提交和远端历史均保持不变。"
+    return 2
+  fi
+
+  if [ "$WORKFLOW_TRANSACTION_ACTIVE" = true ] &&
+     ! verify_workflow_checkpoint "reading the remote history" "读取远端历史"; then
+    return 1
+  fi
+  require_single_origin_push_target || return 1
+  remote_reference="refs/github-auto/remote-${WORKFLOW_LOCK_TOKEN:-$$-${RANDOM:-1}}"
+  if ! git -C "$GIT_ROOT" check-ref-format "$remote_reference" >/dev/null 2>&1; then
+    error_message \
+      "A temporary reference for the remote history could not be created." \
+      "无法为远端历史创建本机临时引用。"
+    return 1
+  fi
+  WORKFLOW_REMOTE_REFERENCE="$remote_reference"
+  if ! set_workflow_state reconciling; then
+    clear_remote_history_reference
+    error_message \
+      "The history-connection safety record could not be written. No remote history was read and no local branch was changed." \
+      "无法写入历史衔接的安全记录。脚本没有读取远端历史，也没有改动本机分支。"
+    return 1
+  fi
+
+  info \
+    "Reading GitHub's latest $branch commit. Git's real transfer progress will appear below." \
+    "正在读取 GitHub 上 ${branch} 分支的最新提交；下方会显示 Git 的实际传输进度。"
+  if ! run_git_with_identity "$BOUND_IDENTITY_FILE" fetch --progress --no-tags \
+    --no-write-fetch-head origin "+refs/heads/$branch:$remote_reference"; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "The latest remote history could not be read. The local branch and remote repository remain unchanged." \
+      "无法读取远端最新历史；本机分支和远端仓库均保持不变。"
+    return 1
+  fi
+  remote_head="$(git -C "$GIT_ROOT" rev-parse --verify "$remote_reference" 2>/dev/null || true)"
+  if [ -z "$remote_head" ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "Git did not return a valid latest commit for the remote branch. The local branch was not changed." \
+      "Git 没有返回有效的远端分支最新提交；本机分支没有改动。"
+    return 1
+  fi
+  if [ "$WORKFLOW_TRANSACTION_ACTIVE" = true ] &&
+     ! verify_workflow_checkpoint "connecting the histories" "衔接两边历史"; then
+    clear_remote_history_reference
+    clear_workflow_state
+    return 1
+  fi
+
+  if [ "$remote_head" = "$local_head" ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    git -C "$GIT_ROOT" config --local "branch.$branch.remote" origin || true
+    git -C "$GIT_ROOT" config --local "branch.$branch.merge" "refs/heads/$branch" || true
+    success \
+      "GitHub already has this exact commit; no connecting commit or second upload was needed." \
+      "GitHub 已经包含这个准确提交，因此无需创建衔接提交，也无需再次上传。"
+    return 0
+  fi
+  if git -C "$GIT_ROOT" merge-base --is-ancestor "$remote_head" "$local_head" 2>/dev/null; then
+    clear_remote_history_reference
+    clear_workflow_state
+    info \
+      "The refreshed remote history is already contained in the local branch. Retrying the same normal upload now." \
+      "重新读取后，远端历史已经包含在本机分支中；现在重新进行同一次普通上传。"
+    push_current_branch true no
+    return $?
+  fi
+
+  local_tree="$(git -C "$GIT_ROOT" rev-parse --verify "${local_head}^{tree}" 2>/dev/null || true)"
+  proposed_message="$(git -C "$GIT_ROOT" log -1 --format='%s' "$local_head" 2>/dev/null || true)"
+  [ -n "$proposed_message" ] || proposed_message="$DEFAULT_COMMIT_MESSAGE"
+  muted \
+    "The connecting commit will place the remote history first, retain the existing local history, and use the current local commit's complete file snapshot." \
+    "衔接提交会把远端历史接在主线上，同时保留现有本机历史，并采用当前本机提交的完整文件快照。"
+  prompt_commit_message "$proposed_message" || commit_status=$?
+  if [ "$commit_status" -eq 2 ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    warn \
+      "History connection canceled before the local branch changed. The local commit and remote history remain unchanged." \
+      "已在改动本机分支前取消历史衔接；本机提交和远端历史均保持不变。"
+    return 2
+  elif [ "$commit_status" -ne 0 ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    return 1
+  fi
+  if [ "$WORKFLOW_TRANSACTION_ACTIVE" = true ] &&
+     ! verify_workflow_checkpoint "creating the connecting commit" "创建衔接提交"; then
+    clear_remote_history_reference
+    clear_workflow_state
+    return 1
+  fi
+  if [ -z "$local_tree" ] || ! verify_clean_current_snapshot "$local_tree"; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "Local files or the staging area changed before the histories were connected. Nothing was committed or uploaded." \
+      "在衔接历史前，本机文件或暂存区发生了变化。脚本没有创建提交，也没有上传。"
+    return 1
+  fi
+  if [ "$(git -C "$GIT_ROOT" rev-parse --verify "refs/heads/$branch" 2>/dev/null || true)" != "$local_head" ] ||
+     [ "$(git -C "$GIT_ROOT" rev-parse --verify "$remote_reference" 2>/dev/null || true)" != "$remote_head" ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "The local or fetched remote commit changed before the connecting commit was created. Nothing was uploaded." \
+      "创建衔接提交前，本机提交或已读取的远端提交发生了变化。脚本没有上传。"
+    return 1
+  fi
+
+  info \
+    "Creating the confirmed connecting commit without changing the current files..." \
+    "正在创建已确认的衔接提交；当前文件不会发生变化……"
+  new_commit="$(
+    printf '%s\n' "$COMMIT_MESSAGE" |
+      GIT_AUTHOR_NAME="$WORKFLOW_EXPECTED_AUTHOR_NAME" \
+      GIT_AUTHOR_EMAIL="$WORKFLOW_EXPECTED_EMAIL" \
+      GIT_COMMITTER_NAME="$WORKFLOW_EXPECTED_AUTHOR_NAME" \
+      GIT_COMMITTER_EMAIL="$WORKFLOW_EXPECTED_EMAIL" \
+      git -C "$GIT_ROOT" \
+        -c "user.name=$WORKFLOW_EXPECTED_AUTHOR_NAME" \
+        -c "user.email=$WORKFLOW_EXPECTED_EMAIL" \
+        commit-tree "$local_tree" -p "$remote_head" -p "$local_head" -F -
+  )" || new_commit=""
+  if [ -z "$new_commit" ] ||
+     [ "$(git -C "$GIT_ROOT" show -s --format='%T' "$new_commit" 2>/dev/null || true)" != "$local_tree" ] ||
+     [ "$(git -C "$GIT_ROOT" show -s --format='%P' "$new_commit" 2>/dev/null || true)" != "$remote_head $local_head" ] ||
+     [ "$(git -C "$GIT_ROOT" show -s --format='%B' "$new_commit" 2>/dev/null || true)" != "$COMMIT_MESSAGE" ] ||
+     [ "$(git -C "$GIT_ROOT" show -s --format='%an <%ae>' "$new_commit" 2>/dev/null || true)" != "$WORKFLOW_EXPECTED_AUTHOR_NAME <$WORKFLOW_EXPECTED_EMAIL>" ] ||
+     [ "$(git -C "$GIT_ROOT" show -s --format='%cn <%ce>' "$new_commit" 2>/dev/null || true)" != "$WORKFLOW_EXPECTED_AUTHOR_NAME <$WORKFLOW_EXPECTED_EMAIL>" ]; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "The connecting commit could not be created and verified exactly. The local branch and remote repository remain unchanged." \
+      "无法准确创建并核对衔接提交；本机分支和远端仓库均保持不变。"
+    return 1
+  fi
+  if ! git -C "$GIT_ROOT" update-ref "refs/heads/$branch" "$new_commit" "$local_head"; then
+    clear_remote_history_reference
+    clear_workflow_state
+    error_message \
+      "The local branch could not be advanced safely because it changed or Git could not write it. Nothing was uploaded." \
+      "无法安全更新本机分支：它可能已经发生变化，或者 Git 无法写入。脚本没有上传。"
+    return 1
+  fi
+  clear_remote_history_reference
+  clear_workflow_state
+  if ! capture_workflow_checkpoint; then
+    error_message \
+      "The connecting commit was created locally, but its final state could not be recorded. No upload was attempted." \
+      "衔接提交已经在本机创建，但无法记录完成后的状态。脚本没有上传。"
+    return 1
+  fi
+  success \
+    "Remote and local history are now connected locally. Retrying the normal upload without force." \
+    "远端历史与本机历史已经在本机完成衔接；现在重新进行普通上传，不会使用强制推送。"
+  push_current_branch true no
+}
+
 explain_push_failure() {
   local output="$1"
   local branch="$2"
@@ -1541,10 +1771,10 @@ explain_push_failure() {
     "The push did not complete. No force push was used, no remote history was overwritten, and any new commit remains safely in this local repository." \
     "本次上传没有完成。脚本没有强制推送，也没有覆盖远端历史；刚刚创建的提交仍安全保留在当前本地仓库中。"
   case "$normalized" in
-    *non-fast-forward*|*fetch\ first*|*updates\ were\ rejected*)
+    *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do\ not*)
       muted \
-        "GitHub has commits on $branch that are not in this local branch. Review and integrate the remote changes before pushing again; the script did not merge or rewrite either history automatically." \
-        "GitHub 上的 ${branch} 分支包含本地尚未拥有的提交。请先查看并整合远端改动，再重新上传；脚本没有擅自合并或改写任何一方的历史。"
+        "GitHub has commits on $branch that are not in this local branch. You can use the option below to retain both histories and append the current local version, or leave both sides unchanged." \
+        "GitHub 上的 ${branch} 分支包含本机尚未拥有的提交。你可以使用下方选项，在保留两边历史的同时追加当前本机版本；也可以不作处理，让两边保持原状。"
       ;;
     *permission\ denied*|*publickey*|*repository\ not\ found*|*write\ access*)
       muted \

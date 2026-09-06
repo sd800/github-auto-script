@@ -476,9 +476,9 @@ prompt_yes_no() {
 
   if [ "$UI_LANGUAGE" = "zh" ]; then
     if [ "$default_answer" = "no" ]; then
-      hint="[是(y)/否(n)，默认否]"
+      hint="[是(y)/否(N)，默认否]"
     else
-      hint="[是(y)/否(n)，默认是]"
+      hint="[是(Y)/否(n)，默认是]"
     fi
   elif [ "$default_answer" = "no" ]; then
     hint="[y/N]"

@@ -118,10 +118,10 @@ push_fixture() {
   CURRENT_REPOSITORY_OWNER=tester
   CURRENT_REPOSITORY_NAME=repo
   git -C "$GIT_ROOT" remote add origin git@github-tester:tester/repo.git
-  AUDIT_REMOTE="$GIT_ROOT/remote.git"
+  AUDIT_REMOTE="$AUDIT_TMP/$1-remote.git"
   git init --bare -q "$AUDIT_REMOTE"
   mkdir -p "$AUDIT_TMP/transport"
-  printf '#!/bin/sh\nprintf "invoked\\n" >> "$AUDIT_SSH_LOG"\nexec git-receive-pack "$AUDIT_REMOTE"\n' > "$AUDIT_TMP/transport/ssh"
+  printf '#!/bin/sh\nprintf "invoked\\n" >> "$AUDIT_SSH_LOG"\nfor argument in "$@"; do\n  case "$argument" in\n    *git-upload-pack*) exec git-upload-pack "$AUDIT_REMOTE" ;;\n    *git-receive-pack*) exec git-receive-pack "$AUDIT_REMOTE" ;;\n  esac\ndone\nexit 1\n' > "$AUDIT_TMP/transport/ssh"
   chmod +x "$AUDIT_TMP/transport/ssh"
   export AUDIT_REMOTE
 }
@@ -229,6 +229,87 @@ intent_to_add_project_is_reviewed() {
   [ "$result" -eq 2 ] && [ "$(git -C "$GIT_ROOT" write-tree)" = "$before" ] &&
     grep -Fq 'library' "$AUDIT_TMP/intent-review"
 }
+prepare_remote_ahead_fixture() {
+  local name="$1"
+  push_fixture "$name" || return 1
+  local remote_work="$AUDIT_TMP/$name-remote-work"
+  git -C "$AUDIT_REMOTE" symbolic-ref HEAD refs/heads/main
+  mkdir -p "$remote_work"
+  git -C "$remote_work" init -q
+  git -C "$remote_work" symbolic-ref HEAD refs/heads/main
+  git -C "$remote_work" remote add origin "$AUDIT_REMOTE"
+  git -C "$remote_work" config user.name remote-user
+  git -C "$remote_work" config user.email remote@example.com
+  printf 'remote history\n' > "$remote_work/remote.txt"
+  git -C "$remote_work" add -A
+  git -C "$remote_work" commit -qm 'Remote release'
+  git -C "$remote_work" push -q origin main
+  AUDIT_REMOTE_HEAD="$(git --git-dir="$AUDIT_REMOTE" rev-parse refs/heads/main)"
+  AUDIT_LOCAL_HEAD="$(git -C "$GIT_ROOT" rev-parse HEAD)"
+  AUDIT_LOCAL_TREE="$(git -C "$GIT_ROOT" rev-parse 'HEAD^{tree}')"
+  : > "$AUDIT_TMP/$name-key"
+  BOUND_EMAIL=tester@example.com
+  BOUND_IDENTITY_FILE="$AUDIT_TMP/$name-key"
+  git -C "$GIT_ROOT" config user.name tester
+  git -C "$GIT_ROOT" config user.email tester@example.com
+  git -C "$GIT_ROOT" config github-auto.username tester
+  git -C "$GIT_ROOT" config github-auto.ssh-alias github-tester
+  git -C "$GIT_ROOT" config github-auto.identity-file "$BOUND_IDENTITY_FILE"
+  capture_workflow_checkpoint
+}
+remote_history_append_defaults_to_no() {
+  prepare_remote_ahead_fixture append-no || return 1
+  local PATH="$AUDIT_TMP/transport:$PATH" AUDIT_SSH_LOG="$AUDIT_TMP/append-no-log" result=0
+  export PATH AUDIT_SSH_LOG
+  append_current_version_to_remote_history main "$AUDIT_LOCAL_HEAD" \
+    > "$AUDIT_TMP/append-no-output" 2>&1 <<< '' || result=$?
+  [ "$result" -eq 2 ] && [ ! -f "$AUDIT_SSH_LOG" ] &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$AUDIT_LOCAL_HEAD" ] &&
+    [ "$(git --git-dir="$AUDIT_REMOTE" rev-parse refs/heads/main)" = "$AUDIT_REMOTE_HEAD" ]
+}
+remote_history_is_retained_before_local_snapshot() {
+  prepare_remote_ahead_fixture append-yes || return 1
+  local PATH="$AUDIT_TMP/transport:$PATH" AUDIT_SSH_LOG="$AUDIT_TMP/append-yes-log" result=0
+  export PATH AUDIT_SSH_LOG
+  ( ui_prompt_yes_no() { return 0; }
+    prompt_commit_message() { COMMIT_MESSAGE="$1"; return 0; }
+    append_current_version_to_remote_history main "$AUDIT_LOCAL_HEAD" ) \
+      > "$AUDIT_TMP/append-yes-output" 2>&1 || result=$?
+  local published="$(git --git-dir="$AUDIT_REMOTE" rev-parse refs/heads/main)"
+  [ "$result" -eq 0 ] &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$published" ] &&
+    [ "$(git --git-dir="$AUDIT_REMOTE" show -s --format='%T' "$published")" = "$AUDIT_LOCAL_TREE" ] &&
+    [ "$(git --git-dir="$AUDIT_REMOTE" show -s --format='%P' "$published")" = "$AUDIT_REMOTE_HEAD $AUDIT_LOCAL_HEAD" ] &&
+    git --git-dir="$AUDIT_REMOTE" cat-file -e "$AUDIT_REMOTE_HEAD^{commit}" &&
+    git --git-dir="$AUDIT_REMOTE" cat-file -e "$AUDIT_LOCAL_HEAD^{commit}" &&
+    [ -z "$(git -C "$GIT_ROOT" for-each-ref --format='%(refname)' refs/github-auto/)" ]
+}
+remote_history_append_message_can_be_canceled() {
+  prepare_remote_ahead_fixture append-cancel || return 1
+  local PATH="$AUDIT_TMP/transport:$PATH" AUDIT_SSH_LOG="$AUDIT_TMP/append-cancel-log" result=0
+  export PATH AUDIT_SSH_LOG
+  ( ui_prompt_yes_no() { return 0; }
+    prompt_commit_message() { return 2; }
+    append_current_version_to_remote_history main "$AUDIT_LOCAL_HEAD" ) \
+      > "$AUDIT_TMP/append-cancel-output" 2>&1 || result=$?
+  [ "$result" -eq 2 ] && [ -s "$AUDIT_SSH_LOG" ] &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$AUDIT_LOCAL_HEAD" ] &&
+    [ "$(git --git-dir="$AUDIT_REMOTE" rev-parse refs/heads/main)" = "$AUDIT_REMOTE_HEAD" ] &&
+    [ -z "$(git -C "$GIT_ROOT" for-each-ref --format='%(refname)' refs/github-auto/)" ]
+}
+remote_hook_rejection_does_not_offer_history_append() {
+  ! push_rejection_is_remote_ahead 'Updates were rejected by a pre-receive hook'
+}
+localized_default_letter_is_uppercase() {
+  local UI_LANGUAGE=zh ADVANCED_LANGUAGE=zh result=0
+  prompt_yes_no '确认默认是' yes > "$AUDIT_TMP/prompt-yes" 2>&1 <<< '' || return 1
+  prompt_yes_no '确认默认否' no > "$AUDIT_TMP/prompt-no" 2>&1 <<< '' || result=$?
+  [ "$result" -eq 1 ] &&
+    grep -Fq '[是(Y)/否(n)，默认是]' "$AUDIT_TMP/prompt-yes" &&
+    grep -Fq '[是(y)/否(N)，默认否]' "$AUDIT_TMP/prompt-no" &&
+    advanced_prompt_yes_no 'advanced' '高级默认是' yes > "$AUDIT_TMP/advanced-yes" 2>&1 <<< '' &&
+    grep -Fq '[是(Y)/否(n)，默认是]' "$AUDIT_TMP/advanced-yes"
+}
 check forced_ignored_file
 check unborn_forced_ignored_file
 check intent_to_add_ignored_file
@@ -246,5 +327,10 @@ check unfinished_cherry_pick_sequence
 check ordinary_changes_use_one_hint_scan
 check hidden_literal_filenames
 check intent_to_add_project_is_reviewed
+check remote_history_append_defaults_to_no
+check remote_history_is_retained_before_local_snapshot
+check remote_history_append_message_can_be_canceled
+check remote_hook_rejection_does_not_offer_history_append
+check localized_default_letter_is_uppercase
 printf '%s checks; %s failures\n' "$AUDIT_COUNT" "$AUDIT_FAILURES"
 [ "$AUDIT_FAILURES" -eq 0 ]
