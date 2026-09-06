@@ -101,6 +101,22 @@ confirmed_comment_message() {
     prepare_and_commit > "$AUDIT_TMP/message-output" 2>&1 &&
       [ "$(git -C "$GIT_ROOT" log -1 --format=%s)" = '#123 Fix the reported issue' ] )
 }
+previous_github_commit_message_is_shown() {
+  fixture previous-message && baseline || return 1
+  git -C "$GIT_ROOT" update-ref refs/remotes/origin/main HEAD || return 1
+  printf 'local draft\n' >> "$GIT_ROOT/base.txt"
+  git -C "$GIT_ROOT" add -A || return 1
+  git -C "$GIT_ROOT" commit -qm 'Local draft' || return 1
+  local UI_LANGUAGE=en
+  prompt_commit_message Update > "$AUDIT_TMP/previous-message-en" 2>&1 <<< '' || return 1
+  UI_LANGUAGE=zh
+  prompt_commit_message Update > "$AUDIT_TMP/previous-message-zh" 2>&1 <<< '' || return 1
+  grep -Fq 'Commit message: Update' "$AUDIT_TMP/previous-message-en" &&
+    grep -Fq 'Previous commit message: baseline' "$AUDIT_TMP/previous-message-en" &&
+    grep -Fq '本次提交说明：Update' "$AUDIT_TMP/previous-message-zh" &&
+    grep -Fq '上次提交说明：baseline' "$AUDIT_TMP/previous-message-zh" &&
+    ! grep -Fq 'Previous commit message: Local draft' "$AUDIT_TMP/previous-message-en"
+}
 ssh_wrapper_with_spaces() {
   fixture ssh-path || return 1
   local TMPDIR="$AUDIT_TMP/temporary space's directory" PATH="$AUDIT_TMP/bin:$PATH"
@@ -318,6 +334,7 @@ check sparse_staged_removal
 check nested_repository_at_depth
 check registered_new_submodule
 check confirmed_comment_message
+check previous_github_commit_message_is_shown
 check ssh_wrapper_with_spaces
 check multiple_push_destinations
 check push_does_not_follow_tags

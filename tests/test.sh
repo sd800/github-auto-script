@@ -263,6 +263,9 @@ test_alias_allocation() {
 test_git_binding_and_commit() {
   local repository="$TEST_TEMPORARY/git-project"
   local initial_repository="$TEST_TEMPORARY/initial-version-project"
+  local initial_template_repository="$TEST_TEMPORARY/initial-template-version-project"
+  local fallback_repository="$TEST_TEMPORARY/fallback-message-project"
+  local initial_no_version_repository="$TEST_TEMPORARY/initial-no-version-project"
   local bare_repository="$TEST_TEMPORARY/remote.git"
   local fake_bin="$TEST_TEMPORARY/fake-bin"
   local fake_key="$TEST_TEMPORARY/fake-key"
@@ -299,7 +302,8 @@ test_git_binding_and_commit() {
   fi
 
   printf 'first\n' > "$repository/file.txt"
-  git -C "$repository" add file.txt
+  printf '{"version":"1.0.0"}\n' > "$repository/package.json"
+  git -C "$repository" add file.txt package.json
   git -C "$repository" commit -q -m "Initial commit"
   printf 'second\n' >> "$repository/file.txt"
   write_changelog "$repository/CHANGELOG.md" "7.8.9" "7.8.8"
@@ -326,6 +330,50 @@ test_git_binding_and_commit() {
     assert_equal "Release 8.9.1" "$message" "a detected version takes priority over Initial commit"
   else
     fail_test "first commit uses its detected release version"
+  fi
+
+  mkdir -p "$initial_template_repository"
+  git -C "$initial_template_repository" init -q
+  git -C "$initial_template_repository" config user.name tester
+  git -C "$initial_template_repository" config user.email tester@example.com
+  printf '{"version":"1.0.0"}\n' > "$initial_template_repository/package.json"
+  GIT_ROOT="$initial_template_repository"
+  if prepare_and_commit; then
+    message="$(git -C "$initial_template_repository" log -1 --pretty=%s)"
+    assert_equal "Release 1.0.0" "$message" "a template version included in the first commit remains eligible"
+  else
+    fail_test "a template version included in the first commit remains eligible"
+  fi
+
+  mkdir -p "$fallback_repository"
+  git -C "$fallback_repository" init -q
+  git -C "$fallback_repository" config user.name tester
+  git -C "$fallback_repository" config user.email tester@example.com
+  printf '{"version":"1.0.0"}\n' > "$fallback_repository/package.json"
+  printf 'baseline\n' > "$fallback_repository/file.txt"
+  git -C "$fallback_repository" add -A
+  git -C "$fallback_repository" commit -qm baseline
+  printf '{"version":"1.0.0","dependencies":{"example":"1.0.0"}}\n' > "$fallback_repository/package.json"
+  printf 'changed\n' >> "$fallback_repository/file.txt"
+  GIT_ROOT="$fallback_repository"
+  if prepare_and_commit; then
+    message="$(git -C "$fallback_repository" log -1 --pretty=%s)"
+    assert_equal "Update" "$message" "an unchanged template version falls back to Update"
+  else
+    fail_test "an unchanged template version falls back to Update"
+  fi
+
+  mkdir -p "$initial_no_version_repository"
+  git -C "$initial_no_version_repository" init -q
+  git -C "$initial_no_version_repository" config user.name tester
+  git -C "$initial_no_version_repository" config user.email tester@example.com
+  printf 'first\n' > "$initial_no_version_repository/file.txt"
+  GIT_ROOT="$initial_no_version_repository"
+  if prepare_and_commit; then
+    message="$(git -C "$initial_no_version_repository" log -1 --pretty=%s)"
+    assert_equal "Initial commit" "$message" "a first commit without a release version uses Initial commit"
+  else
+    fail_test "a first commit without a release version uses Initial commit"
   fi
 
   GIT_ROOT="$repository"
@@ -1712,7 +1760,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.16.2" "$english_version" "English changelog declares release 3.16.2"
+  assert_equal "3.17.1" "$english_version" "English changelog declares release 3.17.1"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then

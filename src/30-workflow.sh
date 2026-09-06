@@ -816,9 +816,16 @@ configure_project() {
 prompt_commit_message() {
   local proposed="$1"
   local entered=""
+  local previous_message=""
 
   heading "Confirm commit message" "确认提交说明"
   muted "Commit message: $proposed" "本次提交说明：$proposed"
+  previous_message="$(previous_github_commit_message || true)"
+  if [ -n "$previous_message" ]; then
+    muted "Previous commit message: $previous_message" "上次提交说明：$previous_message"
+  else
+    muted "Previous commit message: None recorded for this GitHub branch" "上次提交说明：当前本机尚无该 GitHub 分支的提交记录"
+  fi
   entered="$(ui_prompt_value \
     "Press Enter to confirm, or type another commit message.
 Enter :cancel to stop before staging.
@@ -831,6 +838,17 @@ Enter :cancel to stop before staging.
     return 2
   fi
   COMMIT_MESSAGE="$entered"
+}
+
+previous_github_commit_message() {
+  local branch=""
+  local remote_reference=""
+
+  branch="$(git -C "$GIT_ROOT" branch --show-current 2>/dev/null || true)"
+  [ -n "$branch" ] || return 1
+  remote_reference="refs/remotes/origin/$branch"
+  git -C "$GIT_ROOT" show-ref --verify --quiet "$remote_reference" || return 1
+  git -C "$GIT_ROOT" log -1 --format='%s' "$remote_reference" 2>/dev/null
 }
 
 show_staged_changes() {
@@ -1274,9 +1292,9 @@ prepare_and_commit() {
   remember_approved_project_directories
 
   info \
-    "Looking for a release version to prepare the commit message..." \
-    "正在查找项目版本号，以生成本次提交说明……"
-  if resolve_release_version; then
+    "Looking for a release version included in this change..." \
+    "正在查找本次改动中包含的发布版本号……"
+  if resolve_release_version yes; then
     proposed="${RELEASE_PREFIX}${RELEASE_VERSION}"
     info \
       "Detected version ${RELEASE_VERSION} (${VERSION_SOURCE})" \
@@ -1296,12 +1314,12 @@ prepare_and_commit() {
   elif [ "$has_commits" = false ]; then
     proposed="$INITIAL_COMMIT_MESSAGE"
     muted \
-      "No release version was found, so the first commit message will be used." \
-      "没有发现版本号，将使用首次提交说明。"
+      "No release version was found in this change, so the first commit message will be used." \
+      "本次改动中没有发现发布版本号，将使用首次提交说明。"
   else
     muted \
-      "No release version was found, so a general commit message will be used." \
-      "没有发现版本号，将使用通用提交说明。"
+      "No release version was found in this change, so a general commit message will be used." \
+      "本次改动中没有发现发布版本号，将使用通用提交说明。"
   fi
 
   prompt_commit_message "$proposed"

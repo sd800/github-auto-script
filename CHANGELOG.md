@@ -6,6 +6,18 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.17.1 - 2026-09-06
+
+### Changed
+
+- Suggest `Release X.Y.Z` only when the selected version value is newly introduced or changed in the exact snapshot being committed. An unchanged scaffold version such as `1.0.0` now falls back to `Update` on later commits—even if another field in its file changes—while a version included in a first commit remains eligible.
+- When no eligible release version is present, use `Initial commit` for a repository without commits and `Update` for an established repository.
+- Show the previous commit message recorded for the current GitHub branch directly below the proposed message. This reads the local remote-tracking record updated by successful pushes and adds no pre-commit network request.
+
+### Tests
+
+- Added coverage for an unchanged template version in a modified package file, a changed changelog alongside an unchanged package version, the first-commit fallback, and bilingual display of the previous GitHub commit message rather than a newer unpushed local message.
+
 ## 3.16.2 - 2026-09-06
 
 ### Fixed

@@ -183,6 +183,56 @@ RELEASE_VERSION=""
 VERSION_SOURCE=""
 VERSION_POSITION=""
 
+release_version_changed_for_commit() {
+  local relative_path="$1"
+  local source_kind="$2"
+  local current_version="$3"
+  local previous_file=""
+  local previous_object=""
+  local previous_version=""
+  local proposed_object=""
+
+  [ -n "${WORKFLOW_EXPECTED_STAGED_TREE:-}" ] || return 1
+  proposed_object="$(
+    git --literal-pathspecs -C "$GIT_ROOT" ls-tree "$WORKFLOW_EXPECTED_STAGED_TREE" \
+      -- "$relative_path" 2>/dev/null |
+      awk 'NR == 1 { print $3 }'
+  )"
+  [ -n "$proposed_object" ] || return 1
+  git -C "$GIT_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || return 0
+  previous_object="$(
+    git --literal-pathspecs -C "$GIT_ROOT" ls-tree HEAD \
+      -- "$relative_path" 2>/dev/null |
+      awk 'NR == 1 { print $3 }'
+  )"
+  [ -n "$previous_object" ] || return 0
+  previous_file="$(safe_mktemp_file "${TMPDIR:-/tmp}" "previous-version")" || return 1
+  if ! git -C "$GIT_ROOT" cat-file blob "$previous_object" > "$previous_file"; then
+    rm -f "$previous_file"
+    return 1
+  fi
+  case "$source_kind" in
+    package)
+      previous_version="$(get_package_version_from_file "$previous_file" || true)"
+      ;;
+    changelog)
+      previous_version="$(
+        extract_version_from_changelog "$previous_file" >/dev/null 2>&1 &&
+          printf '%s' "$CHANGELOG_EXTRACTED_VERSION"
+      )"
+      ;;
+    version-file)
+      previous_version="$(extract_version_from_version_file "$previous_file" || true)"
+      ;;
+    *)
+      rm -f "$previous_file"
+      return 1
+      ;;
+  esac
+  rm -f "$previous_file"
+  [ "$current_version" != "$previous_version" ]
+}
+
 strip_leading_zeroes() {
   local value="$1"
 
@@ -430,8 +480,8 @@ extract_version_from_changelog() {
   return 2
 }
 
-get_package_version() {
-  local file="$GIT_ROOT/package.json"
+get_package_version_from_file() {
+  local file="$1"
   local version=""
 
   [ -f "$file" ] || return 1
@@ -473,7 +523,12 @@ except Exception:
   return 1
 }
 
+get_package_version() {
+  get_package_version_from_file "$GIT_ROOT/package.json"
+}
+
 resolve_highest_changelog_from_stream() {
+  local changed_only="${1:-no}"
   local file=""
   local best_version=""
   local best_file=""
@@ -487,8 +542,12 @@ resolve_highest_changelog_from_stream() {
 
   while IFS= read -r file; do
     [ -f "$file" ] || continue
+    relative="${file#"$GIT_ROOT"/}"
     if extract_version_from_changelog "$file"; then
-      relative="${file#"$GIT_ROOT"/}"
+      if [ "$changed_only" = yes ] &&
+         ! release_version_changed_for_commit "$relative" changelog "$CHANGELOG_EXTRACTED_VERSION"; then
+        continue
+      fi
       depth="$(printf '%s' "$relative" | awk -F/ '{ print NF }')"
       choose=false
       if [ -z "$best_version" ]; then
@@ -530,6 +589,7 @@ resolve_highest_changelog_from_stream() {
 }
 
 resolve_project_changelogs() {
+  local changed_only="${1:-no}"
   local temporary=""
 
   temporary="$(safe_mktemp_file "${TMPDIR:-/tmp}" "changelogs")" || return 1
@@ -546,7 +606,7 @@ resolve_project_changelogs() {
     \) -prune \) -o \
     \( -type f -iname 'CHANGELOG*' -print \) | LC_ALL=C sort > "$temporary"
 
-  if resolve_highest_changelog_from_stream < "$temporary"; then
+  if resolve_highest_changelog_from_stream "$changed_only" < "$temporary"; then
     rm -f "$temporary"
     return 0
   fi
@@ -611,6 +671,7 @@ version_filename_priority() {
 }
 
 resolve_version_files() {
+  local changed_only="${1:-no}"
   local file=""
   local name=""
   local priority=0
@@ -632,6 +693,10 @@ resolve_version_files() {
       esac
       [ "$(version_filename_priority "$name")" = "$priority" ] || continue
       if version="$(extract_version_from_version_file "$file")"; then
+        if [ "$changed_only" = yes ] &&
+           ! release_version_changed_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
+          continue
+        fi
         RELEASE_VERSION="$version"
         VERSION_SOURCE="${file#"$GIT_ROOT"/}"
         VERSION_POSITION="version-file"
@@ -658,6 +723,10 @@ resolve_version_files() {
 
   while IFS='|' read -r depth priority file; do
     if version="$(extract_version_from_version_file "$file")"; then
+      if [ "$changed_only" = yes ] &&
+         ! release_version_changed_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
+        continue
+      fi
       RELEASE_VERSION="$version"
       VERSION_SOURCE="${file#"$GIT_ROOT"/}"
       VERSION_POSITION="version-file"
@@ -671,23 +740,26 @@ resolve_version_files() {
 }
 
 resolve_release_version() {
+  local changed_only="${1:-no}"
   local package_version=""
 
   RELEASE_VERSION=""
   VERSION_SOURCE=""
   VERSION_POSITION=""
 
-  if package_version="$(get_package_version)"; then
+  if package_version="$(get_package_version)" &&
+     { [ "$changed_only" != yes ] ||
+       release_version_changed_for_commit "package.json" package "$package_version"; }; then
     RELEASE_VERSION="$package_version"
     VERSION_SOURCE="package.json"
     VERSION_POSITION="package"
     return 0
   fi
 
-  if resolve_project_changelogs; then
+  if resolve_project_changelogs "$changed_only"; then
     return 0
   fi
-  if resolve_version_files; then
+  if resolve_version_files "$changed_only"; then
     return 0
   fi
 
