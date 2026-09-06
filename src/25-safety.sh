@@ -49,24 +49,60 @@ resolve_workflow_common_directory() {
   return 0
 }
 
-workflow_lock_owner_pid() {
-  local lock_directory="$1"
-  local owner_pid=""
+workflow_lock_metadata_name_is_recognized() {
+  local name="$1"
 
-  [ -f "$lock_directory/pid" ] || return 1
-  IFS= read -r owner_pid < "$lock_directory/pid" || true
-  [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  printf '%s' "$owner_pid"
+  case "$name" in
+    pid|token)
+      return 0
+      ;;
+  esac
+  [[ "$name" =~ ^(pid|token)\ [2-9][0-9]*$ ]]
+}
+
+workflow_lock_pid_name_is_recognized() {
+  local name="$1"
+
+  [ "$name" = pid ] || [[ "$name" =~ ^pid\ [2-9][0-9]*$ ]]
+}
+
+workflow_lock_owner_pids() {
+  local lock_directory="$1"
+  local entry=""
+  local name=""
+  local owner_pid=""
+  local found=false
+
+  [ -d "$lock_directory" ] || return 1
+  while IFS= read -r -d '' entry; do
+    name="${entry##*/}"
+    workflow_lock_metadata_name_is_recognized "$name" || return 1
+    [ -f "$entry" ] && [ ! -L "$entry" ] || return 1
+    if workflow_lock_pid_name_is_recognized "$name"; then
+      IFS= read -r owner_pid < "$entry" || true
+      [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\n' "$owner_pid"
+      found=true
+    fi
+  done < <(find "$lock_directory" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+  [ "$found" = true ]
 }
 
 remove_stale_workflow_lock() {
   local lock_directory="$1"
-  local unexpected=""
+  local entries=()
+  local entry=""
+  local name=""
 
-  unexpected="$(find "$lock_directory" -mindepth 1 -maxdepth 1 \
-    ! -name pid ! -name token -print -quit 2>/dev/null || true)"
-  [ -z "$unexpected" ] || return 1
-  rm -f "$lock_directory/pid" "$lock_directory/token" || return 1
+  while IFS= read -r -d '' entry; do
+    name="${entry##*/}"
+    workflow_lock_metadata_name_is_recognized "$name" || return 1
+    [ -f "$entry" ] && [ ! -L "$entry" ] || return 1
+    entries+=("$entry")
+  done < <(find "$lock_directory" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+  for entry in "${entries[@]}"; do
+    rm -f "$entry" || return 1
+  done
   rmdir "$lock_directory" 2>/dev/null
 }
 
@@ -134,7 +170,10 @@ set_workflow_state() {
 }
 
 acquire_workflow_lock() {
+  local active_pid=""
   local owner_pid=""
+  local owner_pids=""
+  local owners_known=false
 
   if [ "$WORKFLOW_LOCK_HELD" = true ]; then
     return 0
@@ -150,8 +189,17 @@ acquire_workflow_lock() {
   WORKFLOW_LOCK_TOKEN="$$-${RANDOM:-1}-${RANDOM:-1}"
 
   if ! mkdir "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
-    owner_pid="$(workflow_lock_owner_pid "$WORKFLOW_LOCK_DIRECTORY" || true)"
-    if [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
+    if owner_pids="$(workflow_lock_owner_pids "$WORKFLOW_LOCK_DIRECTORY")"; then
+      owners_known=true
+      while IFS= read -r owner_pid; do
+        [ -n "$owner_pid" ] || continue
+        if kill -0 "$owner_pid" 2>/dev/null; then
+          active_pid="$owner_pid"
+          break
+        fi
+      done <<< "$owner_pids"
+    fi
+    if [ "$owners_known" = true ] && [ -z "$active_pid" ]; then
       if ! remove_stale_workflow_lock "$WORKFLOW_LOCK_DIRECTORY" ||
          ! mkdir "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
         error_message \
@@ -163,8 +211,8 @@ acquire_workflow_lock() {
       error_message \
         "Another $SCRIPT_NAME process is already preparing, committing, updating, or pushing this same Git repository. Let that process finish before running this command again." \
         "另一个 ${SCRIPT_NAME} 进程正在处理同一个 Git 仓库，可能正在准备、提交、更新设置或上传。请等待该进程结束后再运行本命令。"
-      if [ -n "$owner_pid" ]; then
-        muted "Active process ID: $owner_pid" "正在运行的进程编号：$owner_pid"
+      if [ -n "$active_pid" ]; then
+        muted "Active process ID: $active_pid" "正在运行的进程编号：$active_pid"
       else
         muted \
           "The lock owner could not be identified, so the script stopped instead of risking two overlapping Git operations." \

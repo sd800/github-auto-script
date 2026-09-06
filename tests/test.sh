@@ -1712,7 +1712,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.16.1" "$english_version" "English changelog declares release 3.16.1"
+  assert_equal "3.16.2" "$english_version" "English changelog declares release 3.16.2"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then
@@ -2195,6 +2195,48 @@ test_focused_transaction_safety() {
     fail_test "a stale owned workflow lock is reclaimed safely"
   fi
   release_workflow_lock
+
+  mkdir "$lock_directory"
+  printf '99999999\n' > "$lock_directory/pid 2"
+  printf 'stale-provider-copy\n' > "$lock_directory/token 2"
+  WORKFLOW_LOCK_HELD=false
+  if acquire_workflow_lock >/dev/null 2>&1 && [ "$WORKFLOW_LOCK_HELD" = true ]; then
+    pass "a stale lock whose metadata was numbered by a file provider is reclaimed safely"
+  else
+    fail_test "a stale lock whose metadata was numbered by a file provider is reclaimed safely"
+  fi
+  release_workflow_lock
+
+  mkdir "$lock_directory"
+  printf '%s\n' "$$" > "$lock_directory/pid 2"
+  printf 'active-provider-copy\n' > "$lock_directory/token 2"
+  WORKFLOW_LOCK_HELD=false
+  if acquire_workflow_lock > "$output_file" 2>&1; then
+    fail_test "a numbered lock owned by a live process still blocks an overlapping run"
+  elif grep -Fq "Active process ID: $$" "$output_file"; then
+    pass "a numbered lock owned by a live process still blocks an overlapping run"
+  else
+    fail_test "a numbered lock owned by a live process still blocks an overlapping run"
+  fi
+  rm -f "$lock_directory/pid 2" "$lock_directory/token 2"
+  rmdir "$lock_directory"
+
+  mkdir "$lock_directory"
+  printf '99999999\n' > "$lock_directory/pid 2"
+  printf 'stale-provider-copy\n' > "$lock_directory/token 2"
+  printf 'not lock metadata\n' > "$lock_directory/project-file"
+  WORKFLOW_LOCK_HELD=false
+  if acquire_workflow_lock > "$output_file" 2>&1; then
+    fail_test "unknown content beside numbered lock metadata prevents automatic cleanup"
+  elif [ -f "$lock_directory/pid 2" ] &&
+       [ -f "$lock_directory/token 2" ] &&
+       [ -f "$lock_directory/project-file" ]; then
+    pass "unknown content beside numbered lock metadata prevents automatic cleanup"
+  else
+    fail_test "unknown content beside numbered lock metadata prevents automatic cleanup"
+  fi
+  rm -f "$lock_directory/pid 2" "$lock_directory/token 2" "$lock_directory/project-file"
+  rmdir "$lock_directory"
 
   printf 'phase: staged\npid: 99999999\n' > "$WORKFLOW_COMMON_DIRECTORY/github-auto.workflow-state"
   WORKFLOW_LOCK_HELD=false

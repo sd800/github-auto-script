@@ -6,6 +6,17 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.16.2 - 2026-09-06
+
+### Fixed
+
+- Recover an interrupted repository workflow when iCloud Drive or another file provider has renamed the script's internal `pid` and `token` lock metadata to numbered conflict copies such as `pid 2` and `token 2`.
+- Reclaim such a lock only when every entry is recognized internal metadata and every recorded process has ended. A live process, malformed metadata, symlink, directory, or unknown file still blocks the later run.
+
+### Tests
+
+- Added focused coverage for both stale and still-active workflow locks whose internal metadata has a file-provider number suffix.
+
 ## 3.16.1 - 2026-09-06
 
 ### Added
