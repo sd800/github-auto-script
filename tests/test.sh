@@ -129,6 +129,8 @@ write_changelog() {
 
 test_version_resolution() {
   local case_directory=""
+  local status=0
+  local saved_lookup_limit="$VERSION_LOOKUP_LIMIT_SECONDS"
 
   case_directory="$TEST_TEMPORARY/version-package"
   mkdir -p "$case_directory"
@@ -139,6 +141,27 @@ test_version_resolution() {
     assert_equal "4.5.6|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "package.json has highest source priority"
   else
     fail_test "package.json has highest source priority"
+  fi
+
+  VERSION_LOOKUP_LIMIT_SECONDS=0
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "4.5.6|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "package.json is checked before the recursive lookup time limit"
+  else
+    fail_test "package.json is checked before the recursive lookup time limit"
+  fi
+
+  case_directory="$TEST_TEMPORARY/version-timeout"
+  mkdir -p "$case_directory"
+  GIT_ROOT="$case_directory"
+  status=0
+  resolve_release_version || status=$?
+  assert_equal "124" "$status" "recursive version lookup stops at its time limit"
+  VERSION_LOOKUP_LIMIT_SECONDS="$saved_lookup_limit"
+  if prompt_release_version_after_timeout "Update" >/dev/null 2>&1 <<< "2.5.1"; then
+    assert_equal "2.5.1|manual" "$RELEASE_VERSION|$VERSION_POSITION" "a timeout asks for an optional release version"
+  else
+    fail_test "a timeout asks for an optional release version"
   fi
 
   case_directory="$TEST_TEMPORARY/version-primary"
@@ -361,6 +384,22 @@ test_git_binding_and_commit() {
     assert_equal "Update" "$message" "an unchanged template version falls back to Update"
   else
     fail_test "an unchanged template version falls back to Update"
+  fi
+
+  printf '{"version":"2.3.1"}\n' > "$fallback_repository/package.json"
+  printf 'release\n' >> "$fallback_repository/file.txt"
+  if prepare_and_commit; then
+    message="$(git -C "$fallback_repository" log -1 --pretty=%s)"
+    assert_equal "Release 2.3.1" "$message" "a changed ordinary package version produces a release message"
+  else
+    fail_test "a changed ordinary package version produces a release message"
+  fi
+  printf 'later update\n' >> "$fallback_repository/file.txt"
+  if prepare_and_commit; then
+    message="$(git -C "$fallback_repository" log -1 --pretty=%s)"
+    assert_equal "Release 2.3.1" "$message" "an unchanged ordinary package version remains eligible"
+  else
+    fail_test "an unchanged ordinary package version remains eligible"
   fi
 
   mkdir -p "$initial_no_version_repository"
@@ -1760,7 +1799,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.17.1" "$english_version" "English changelog declares release 3.17.1"
+  assert_equal "3.17.2" "$english_version" "English changelog declares release 3.17.2"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then

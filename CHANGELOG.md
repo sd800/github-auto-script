@@ -6,6 +6,17 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.17.2 - 2026-09-23
+
+### Changed
+
+- Always inspect the root `package.json` before any recursive lookup. An ordinary valid package version remains eligible for `Release X.Y.Z` even when unchanged; only an unchanged common scaffold placeholder (`0.0.0`, `0.0.1`, `0.1.0`, or `1.0.0`) is skipped. A placeholder is still eligible when first added or deliberately changed.
+- Limit the recursive CHANGELOG and VERSION lookup to five seconds. When the limit is reached, stop the scan, ask for an optional release version, and use `Initial commit` or `Update` when the user presses Enter.
+
+### Tests
+
+- Added coverage for package-first lookup before the time limit, timed-out recursive lookup and manual input, unchanged placeholder fallback, and unchanged ordinary package versions.
+
 ## 3.17.1 - 2026-09-06
 
 ### Changed

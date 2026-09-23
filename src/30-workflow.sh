@@ -1171,6 +1171,37 @@ list_dirty_submodules() {
   '
 }
 
+prompt_release_version_after_timeout() {
+  local fallback_message="$1"
+  local entered=""
+
+  warn \
+    "Automatic version lookup was stopped after 5 seconds so this commit does not keep you waiting." \
+    "自动查找版本号已在 5 秒后停止，避免本次提交继续等待。"
+  muted \
+    "If this is a release, enter its version now (for example, 2.3.1). Press Enter to use: $fallback_message" \
+    "如果本次需要发布版本，请现在输入版本号（例如 2.3.1）；直接按 Enter 将使用：${fallback_message}"
+  while true; do
+    entered="$(ui_prompt_value "Release version (optional)" "本次版本号（可留空）")" || return 1
+    entered="$(trim "$entered")"
+    if [ -z "$entered" ]; then
+      return 1
+    fi
+    case "$entered" in
+      v*|V*) entered="${entered#?}" ;;
+    esac
+    if valid_release_version "$entered"; then
+      RELEASE_VERSION="$entered"
+      VERSION_SOURCE="manual input after timeout"
+      VERSION_POSITION="manual"
+      return 0
+    fi
+    warn \
+      "Enter a semantic version such as 2.3.1, or press Enter to use $fallback_message." \
+      "请输入类似 2.3.1 的语义化版本号；也可以直接按 Enter 使用 ${fallback_message}。"
+  done
+}
+
 prepare_and_commit() {
   local has_commits=true
   local rename_initial_branch=false
@@ -1179,6 +1210,8 @@ prepare_and_commit() {
   local review_status=0
   local initial_status_empty=false
   local dirty_submodules=""
+  local version_status=0
+  local fallback_message="$DEFAULT_COMMIT_MESSAGE"
 
   WORKFLOW_COMMIT_CREATED_THIS_RUN=false
 
@@ -1291,10 +1324,15 @@ prepare_and_commit() {
   fi
   remember_approved_project_directories
 
+  if [ "$has_commits" = false ]; then
+    fallback_message="$INITIAL_COMMIT_MESSAGE"
+  fi
+
   info \
-    "Looking for a release version included in this change..." \
-    "正在查找本次改动中包含的发布版本号……"
-  if resolve_release_version yes; then
+    "Checking package.json first, then looking for a release version elsewhere if needed..." \
+    "正在先检查 package.json；如有需要，再从其他位置查找发布版本号……"
+  resolve_release_version yes || version_status=$?
+  if [ "$version_status" -eq 0 ]; then
     proposed="${RELEASE_PREFIX}${RELEASE_VERSION}"
     info \
       "Detected version ${RELEASE_VERSION} (${VERSION_SOURCE})" \
@@ -1311,15 +1349,27 @@ prepare_and_commit() {
           "这个 CHANGELOG 中只识别到一个版本。"
         ;;
     esac
+  elif [ "$version_status" -eq 124 ]; then
+    if prompt_release_version_after_timeout "$fallback_message"; then
+      proposed="${RELEASE_PREFIX}${RELEASE_VERSION}"
+      info \
+        "Using version ${RELEASE_VERSION} entered after the automatic lookup stopped." \
+        "将使用自动查找停止后输入的版本号 ${RELEASE_VERSION}。"
+    else
+      proposed="$fallback_message"
+      muted \
+        "No version was entered, so the fallback commit message will be used." \
+        "没有输入版本号，将使用备用提交说明。"
+    fi
   elif [ "$has_commits" = false ]; then
-    proposed="$INITIAL_COMMIT_MESSAGE"
+    proposed="$fallback_message"
     muted \
-      "No release version was found in this change, so the first commit message will be used." \
-      "本次改动中没有发现发布版本号，将使用首次提交说明。"
+      "No release version was found, so the first commit message will be used." \
+      "没有发现发布版本号，将使用首次提交说明。"
   else
     muted \
-      "No release version was found in this change, so a general commit message will be used." \
-      "本次改动中没有发现发布版本号，将使用通用提交说明。"
+      "No release version was found, so a general commit message will be used." \
+      "没有发现发布版本号，将使用通用提交说明。"
   fi
 
   prompt_commit_message "$proposed"

@@ -182,8 +182,22 @@ SEMVER_COMPARISON=0
 RELEASE_VERSION=""
 VERSION_SOURCE=""
 VERSION_POSITION=""
+VERSION_LOOKUP_LIMIT_SECONDS="${VERSION_LOOKUP_LIMIT_SECONDS:-5}"
+VERSION_LOOKUP_DEADLINE=0
+VERSION_LOOKUP_TIMED_OUT=false
 
-release_version_changed_for_commit() {
+is_common_package_placeholder_version() {
+  case "$1" in
+    0.0.0|0.0.1|0.1.0|1.0.0)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+release_version_eligible_for_commit() {
   local relative_path="$1"
   local source_kind="$2"
   local current_version="$3"
@@ -230,7 +244,35 @@ release_version_changed_for_commit() {
       ;;
   esac
   rm -f "$previous_file"
-  [ "$current_version" != "$previous_version" ]
+  if [ "$current_version" != "$previous_version" ]; then
+    return 0
+  fi
+  if [ "$source_kind" = package ] &&
+     is_common_package_placeholder_version "$current_version"; then
+    return 1
+  fi
+  return 0
+}
+
+version_lookup_has_time() {
+  [ "$SECONDS" -lt "$VERSION_LOOKUP_DEADLINE" ]
+}
+
+wait_for_version_lookup_process() {
+  local process_id="$1"
+  local status=0
+
+  while kill -0 "$process_id" 2>/dev/null; do
+    if ! version_lookup_has_time; then
+      kill -TERM "$process_id" 2>/dev/null || true
+      wait "$process_id" 2>/dev/null || true
+      VERSION_LOOKUP_TIMED_OUT=true
+      return 124
+    fi
+    sleep 0.1
+  done
+  wait "$process_id" || status=$?
+  return "$status"
 }
 
 strip_leading_zeroes() {
@@ -541,11 +583,15 @@ resolve_highest_changelog_from_stream() {
   local status=0
 
   while IFS= read -r file; do
+    if ! version_lookup_has_time; then
+      VERSION_LOOKUP_TIMED_OUT=true
+      return 124
+    fi
     [ -f "$file" ] || continue
     relative="${file#"$GIT_ROOT"/}"
     if extract_version_from_changelog "$file"; then
       if [ "$changed_only" = yes ] &&
-         ! release_version_changed_for_commit "$relative" changelog "$CHANGELOG_EXTRACTED_VERSION"; then
+         ! release_version_eligible_for_commit "$relative" changelog "$CHANGELOG_EXTRACTED_VERSION"; then
         continue
       fi
       depth="$(printf '%s' "$relative" | awk -F/ '{ print NF }')"
@@ -591,6 +637,8 @@ resolve_highest_changelog_from_stream() {
 resolve_project_changelogs() {
   local changed_only="${1:-no}"
   local temporary=""
+  local process_id=""
+  local status=0
 
   temporary="$(safe_mktemp_file "${TMPDIR:-/tmp}" "changelogs")" || return 1
   find "$GIT_ROOT" \
@@ -604,13 +652,23 @@ resolve_project_changelogs() {
       -name .cache -o \
       -name __pycache__ \
     \) -prune \) -o \
-    \( -type f -iname 'CHANGELOG*' -print \) | LC_ALL=C sort > "$temporary"
+    \( -type f -iname 'CHANGELOG*' -print \) > "$temporary" &
+  process_id=$!
+  wait_for_version_lookup_process "$process_id" || status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$temporary"
+    return "$status"
+  fi
+  LC_ALL=C sort -o "$temporary" "$temporary"
 
-  if resolve_highest_changelog_from_stream "$changed_only" < "$temporary"; then
+  status=0
+  resolve_highest_changelog_from_stream "$changed_only" < "$temporary" || status=$?
+  if [ "$status" -eq 0 ]; then
     rm -f "$temporary"
     return 0
   fi
   rm -f "$temporary"
+  [ "$status" -eq 124 ] && return 124
   return 1
 }
 
@@ -679,9 +737,16 @@ resolve_version_files() {
   local temporary=""
   local relative=""
   local depth=""
+  local process_id=""
+  local status=0
+  local ordered=""
 
   while [ "$priority" -le 3 ]; do
     for file in "$GIT_ROOT"/*; do
+      if ! version_lookup_has_time; then
+        VERSION_LOOKUP_TIMED_OUT=true
+        return 124
+      fi
       [ -f "$file" ] || continue
       name="$(basename "$file")"
       case "$(lowercase "$name")" in
@@ -694,7 +759,7 @@ resolve_version_files() {
       [ "$(version_filename_priority "$name")" = "$priority" ] || continue
       if version="$(extract_version_from_version_file "$file")"; then
         if [ "$changed_only" = yes ] &&
-           ! release_version_changed_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
+           ! release_version_eligible_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
           continue
         fi
         RELEASE_VERSION="$version"
@@ -707,60 +772,91 @@ resolve_version_files() {
   done
 
   temporary="$(safe_mktemp_file "${TMPDIR:-/tmp}" "versions")" || return 1
+  ordered="$(safe_mktemp_file "${TMPDIR:-/tmp}" "ordered-versions")" || {
+    rm -f "$temporary"
+    return 1
+  }
+  find "$GIT_ROOT" \
+    \( -type d -name .git -prune \) -o \
+    \( -type f -iname 'VERSION*' -print \) > "$temporary" &
+  process_id=$!
+  wait_for_version_lookup_process "$process_id" || status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$temporary" "$ordered"
+    return "$status"
+  fi
+
   while IFS= read -r file; do
+    if ! version_lookup_has_time; then
+      VERSION_LOOKUP_TIMED_OUT=true
+      rm -f "$temporary" "$ordered"
+      return 124
+    fi
     [ "$(dirname "$file")" != "$GIT_ROOT" ] || continue
     relative="${file#"$GIT_ROOT"/}"
     depth="$(printf '%s' "$relative" | awk -F/ '{ print NF }')"
     printf '%s|%s|%s\n' \
       "$depth" \
       "$(version_filename_priority "$(basename "$file")")" \
-      "$file" >> "$temporary"
-  done < <(
-    find "$GIT_ROOT" \
-      \( -type d -name .git -prune \) -o \
-      \( -type f -iname 'VERSION*' -print \)
-  )
+      "$file" >> "$ordered"
+  done < "$temporary"
 
   while IFS='|' read -r depth priority file; do
+    if ! version_lookup_has_time; then
+      VERSION_LOOKUP_TIMED_OUT=true
+      rm -f "$temporary" "$ordered"
+      return 124
+    fi
     if version="$(extract_version_from_version_file "$file")"; then
       if [ "$changed_only" = yes ] &&
-         ! release_version_changed_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
+         ! release_version_eligible_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
         continue
       fi
       RELEASE_VERSION="$version"
       VERSION_SOURCE="${file#"$GIT_ROOT"/}"
       VERSION_POSITION="version-file"
-      rm -f "$temporary"
+      rm -f "$temporary" "$ordered"
       return 0
     fi
-  done < <(sort -t '|' -k1,1n -k2,2n -k3,3 "$temporary")
+  done < <(sort -t '|' -k1,1n -k2,2n -k3,3 "$ordered")
 
-  rm -f "$temporary"
+  rm -f "$temporary" "$ordered"
   return 1
 }
 
 resolve_release_version() {
   local changed_only="${1:-no}"
   local package_version=""
+  local status=0
 
   RELEASE_VERSION=""
   VERSION_SOURCE=""
   VERSION_POSITION=""
+  VERSION_LOOKUP_TIMED_OUT=false
 
   if package_version="$(get_package_version)" &&
      { [ "$changed_only" != yes ] ||
-       release_version_changed_for_commit "package.json" package "$package_version"; }; then
+       release_version_eligible_for_commit "package.json" package "$package_version"; }; then
     RELEASE_VERSION="$package_version"
     VERSION_SOURCE="package.json"
     VERSION_POSITION="package"
     return 0
   fi
 
-  if resolve_project_changelogs "$changed_only"; then
+  VERSION_LOOKUP_DEADLINE=$((SECONDS + VERSION_LOOKUP_LIMIT_SECONDS))
+  status=0
+  resolve_project_changelogs "$changed_only" || status=$?
+  if [ "$status" -eq 0 ]; then
     return 0
+  elif [ "$status" -eq 124 ]; then
+    return 124
   fi
-  if resolve_version_files "$changed_only"; then
+  status=0
+  resolve_version_files "$changed_only" || status=$?
+  if [ "$status" -eq 0 ]; then
     return 0
+  elif [ "$status" -eq 124 ]; then
+    return 124
   fi
 
   return 1
