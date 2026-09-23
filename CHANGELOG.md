@@ -6,6 +6,16 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.19.2 - 2026-09-23
+
+### Changed
+
+- When more than 25 files change, show only the first 25 in terminal file lists and state the total and omitted count. Keep the full internal review, safety checks, and commit contents unchanged; suppress Git's long per-file commit output for these commits.
+
+### Tests
+
+- Verified both the 25-file boundary and a 26-file commit, including complete commit contents and explicit omission notices.
+
 ## 3.19.1 - 2026-09-23
 
 ### Fixed

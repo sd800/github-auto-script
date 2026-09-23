@@ -1962,7 +1962,7 @@ test_project_release_policy() {
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
   file_version="$(sed -n '1p' "$PROJECT_DIRECTORY/VERSION")"
-  assert_equal "3.19.1" "$english_version" "English changelog declares release 3.19.1"
+  assert_equal "3.19.2" "$english_version" "English changelog declares release 3.19.2"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   assert_equal "$english_version" "$file_version" "root VERSION matches both changelogs"
   assert_equal "1" "$(awk 'END { print NR }' "$PROJECT_DIRECTORY/VERSION")" "root VERSION contains one line only"
@@ -2034,6 +2034,39 @@ test_focused_commit_confirmation() {
     pass "a clean working tree is recorded as having no commit confirmed during this run"
   else
     fail_test "a clean working tree is recorded as having no commit confirmed during this run"
+  fi
+
+  index=1
+  while [ "$index" -le 25 ]; do
+    printf 'change\n' > "$repository/review-$index.txt"
+    index=$((index + 1))
+  done
+  status=0
+  output="$(prepare_and_commit 2>&1)" || status=$?
+  if [ "$status" -eq 0 ] &&
+     [ "$(git -C "$repository" diff-tree --no-commit-id --name-only -r HEAD | wc -l | tr -d ' ')" = 25 ] &&
+     ! printf '%s\n' "$output" | grep -Fq 'additional files are omitted'; then
+    pass "exactly 25 changed files remain fully visible in the terminal"
+  else
+    fail_test "exactly 25 changed files remain fully visible in the terminal"
+  fi
+
+  index=1
+  while [ "$index" -le 26 ]; do
+    printf 'change\n' > "$repository/next-$index.txt"
+    index=$((index + 1))
+  done
+  status=0
+  output="$(prepare_and_commit 2>&1)" || status=$?
+  if [ "$status" -eq 0 ] &&
+     [ "$(git -C "$repository" diff-tree --no-commit-id --name-only -r HEAD | wc -l | tr -d ' ')" = 26 ] &&
+     printf '%s\n' "$output" | grep -Fq 'Showing 25 of 26 changed files.' &&
+     printf '%s\n' "$output" | grep -Fq 'Omitted here: 1.' &&
+     printf '%s\n' "$output" | grep -Fq "Git's per-file commit output was omitted" &&
+     ! printf '%s\n' "$output" | grep -Fq 'create mode'; then
+    pass "26 changed files commit fully while terminal lists only 25 and states what was omitted"
+  else
+    fail_test "26 changed files commit fully while terminal lists only 25 and states what was omitted"
   fi
 
   mkdir -p "$hidden_repository"

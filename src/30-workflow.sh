@@ -852,8 +852,29 @@ previous_github_commit_message() {
 }
 
 show_staged_changes() {
+  local file_count="${1:-0}"
+
   heading "Changes in this commit" "本次改动"
-  git -C "$GIT_ROOT" --no-pager diff --cached --stat
+  git -C "$GIT_ROOT" --no-pager diff --cached --stat --stat-count=25
+  if [ "$file_count" -gt 25 ]; then
+    muted \
+      "Omitted file details: $((file_count - 25)). All changes remain staged." \
+      "另有 $((file_count - 25)) 个文件的明细未在此展开；全部改动仍已暂存。"
+  fi
+}
+
+show_workflow_review_snapshot() {
+  local file_count="$1"
+
+  sed -n '1,25p' "$WORKFLOW_REVIEW_SNAPSHOT"
+  if [ "$file_count" -gt 25 ]; then
+    muted \
+      "Showing 25 of $file_count changed files." \
+      "共 $file_count 个改动文件，仅显示前 25 个。"
+    muted \
+      "Omitted here: $((file_count - 25)). All $file_count will still be checked and included in the commit." \
+      "其余 $((file_count - 25)) 个未在此展开；全部 $file_count 个仍会检查并提交。"
+  fi
 }
 
 POSSIBLE_EMBEDDED_PROJECT_DIRECTORIES=()
@@ -1212,6 +1233,8 @@ prepare_and_commit() {
   local dirty_submodules=""
   local version_status=0
   local fallback_message="$DEFAULT_COMMIT_MESSAGE"
+  local review_file_count=0
+  local commit_options=()
 
   WORKFLOW_COMMIT_CREATED_THIS_RUN=false
 
@@ -1306,12 +1329,13 @@ prepare_and_commit() {
 
   heading "Review changes before committing" "提交前检查改动"
   muted \
-    "This is the exact file snapshot git add -A will prepare. A means added, M modified, D deleted, R renamed, and T a file-type change." \
-    "下面是执行 git add -A 后将要提交的准确文件清单：A 表示新增，M 表示修改，D 表示删除，R 表示重命名，T 表示文件类型发生变化。"
-  sed -n '1,$p' "$WORKFLOW_REVIEW_SNAPSHOT"
+    "This preview comes from the exact file snapshot git add -A will prepare. A means added, M modified, D deleted, R renamed, and T a file-type change." \
+    "下面的预览来自执行 git add -A 后将要提交的准确文件清单：A 表示新增，M 表示修改，D 表示删除，R 表示重命名，T 表示文件类型发生变化。"
+  review_file_count="$(awk 'END { print NR }' "$WORKFLOW_REVIEW_SNAPSHOT")"
+  show_workflow_review_snapshot "$review_file_count"
   muted \
-    "After the commit message is confirmed, git add -A will include every change shown above, including deletions." \
-    "确认提交说明后，脚本会执行 git add -A，把上面显示的全部改动一并纳入提交，其中也包括删除的文件。"
+    "After the commit message is confirmed, git add -A will include all $review_file_count changes, including deletions and any files omitted from this preview." \
+    "确认提交说明后，脚本会执行 git add -A，纳入全部 $review_file_count 个改动，包括删除的文件和上面省略显示的文件。"
 
   review_status=0
   review_possible_embedded_projects || review_status=$?
@@ -1430,7 +1454,7 @@ prepare_and_commit() {
     return 1
   fi
   if [ "$PROJECT_BINDING_REUSED" != true ]; then
-    show_staged_changes
+    show_staged_changes "$review_file_count"
   fi
 
   if ! set_workflow_state committing; then
@@ -1442,6 +1466,10 @@ prepare_and_commit() {
   info \
     "Creating commit: $COMMIT_MESSAGE. Any Git hooks or commit-signing prompt configured for this repository runs during this step." \
     "正在创建提交：${COMMIT_MESSAGE}。如果当前仓库配置了 Git hook 或提交签名，它们会在这一步运行并可能显示自己的提示。"
+  commit_options=(--cleanup=verbatim -m "$COMMIT_MESSAGE")
+  if [ "$review_file_count" -gt 25 ]; then
+    commit_options+=(--quiet)
+  fi
   if ! GIT_AUTHOR_NAME="$WORKFLOW_EXPECTED_AUTHOR_NAME" \
     GIT_AUTHOR_EMAIL="$WORKFLOW_EXPECTED_EMAIL" \
     GIT_COMMITTER_NAME="$WORKFLOW_EXPECTED_AUTHOR_NAME" \
@@ -1449,7 +1477,7 @@ prepare_and_commit() {
     git -C "$GIT_ROOT" \
     -c "user.name=$WORKFLOW_EXPECTED_AUTHOR_NAME" \
     -c "user.email=$WORKFLOW_EXPECTED_EMAIL" \
-    commit --cleanup=verbatim -m "$COMMIT_MESSAGE"; then
+    commit "${commit_options[@]}"; then
     error_message \
       "The commit failed. The selected changes remain staged for inspection, and no push was attempted." \
       "提交失败。本次选择的改动仍保留在暂存区，便于检查；脚本没有执行上传。"
@@ -1462,6 +1490,11 @@ prepare_and_commit() {
     return 1
   fi
   success "Committed: $COMMIT_MESSAGE" "已提交：$COMMIT_MESSAGE"
+  if [ "$review_file_count" -gt 25 ]; then
+    muted \
+      "All $review_file_count changed files were committed; Git's per-file commit output was omitted." \
+      "全部 $review_file_count 个改动文件已提交；Git 逐项列出文件的输出已省略。"
+  fi
 
   if [ "$rename_initial_branch" = true ]; then
     git -C "$GIT_ROOT" branch -M main || fail \
