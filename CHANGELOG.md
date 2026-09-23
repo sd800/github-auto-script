@@ -6,6 +6,12 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.18.2 - 2026-09-23
+
+### Added
+
+- Add a root `VERSION` file as this project's explicit current release number; keep it synchronized with both changelogs on future releases.
+
 ## 3.18.1 - 2026-09-23
 
 ### Changed

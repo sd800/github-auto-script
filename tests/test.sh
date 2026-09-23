@@ -1913,11 +1913,15 @@ test_paged_account_selection() {
 test_project_release_policy() {
   local english_version=""
   local chinese_version=""
+  local file_version=""
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.18.1" "$english_version" "English changelog declares release 3.18.1"
+  file_version="$(sed -n '1p' "$PROJECT_DIRECTORY/VERSION")"
+  assert_equal "3.18.2" "$english_version" "English changelog declares release 3.18.2"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
+  assert_equal "$english_version" "$file_version" "root VERSION matches both changelogs"
+  assert_equal "1" "$(awk 'END { print NR }' "$PROJECT_DIRECTORY/VERSION")" "root VERSION contains one line only"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then
     pass "new project release obeys the no-4 and no-zero-component rule"

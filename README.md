@@ -29,6 +29,7 @@ The project uses one modular central program, one private profile, and one launc
 git-auto/
 |-- git-auto.sh       small central dispatcher
 |-- g.sh              public copy-ready lightweight launcher
+|-- VERSION           current release number
 |-- src/              central Bash implementation
 |   |-- 00-core.sh
 |   |-- 10-ssh.sh
@@ -44,6 +45,7 @@ git-auto/
 |-- CHANGELOG.md
 |-- CHANGELOG_zh.md
 |-- tests/
+|-- sidenote/         local agent notes; ignored by Git
 `-- private/          local only; created automatically and ignored by Git
     |-- config.txt     personal preferences and account metadata
     `-- g.sh           copy-ready launcher with the central path built in
@@ -56,6 +58,8 @@ your-project/
 `git-auto.sh` only locates and loads the required modules beside it. The modules divide configuration and interface behavior, SSH identity handling, repository parsing, normal push workflow, historical import, rename synchronization, and menus. Missing modules stop the program before the workflow starts and identify the exact missing file.
 
 The dispatcher and `src/` folder form one central installation and must be moved or copied together. They remain self-contained Bash code with no package dependency, no public/personal script pair, and no duplicated account block inside executable code. Updating this central installation updates the behavior used by every launcher.
+
+The root [`VERSION`](VERSION) file contains this project's current release number. Each release updates it together with both changelogs.
 
 ## First-time setup
 
