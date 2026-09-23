@@ -1158,7 +1158,7 @@ test_repository_owner_account_enforcement() {
   git -C "$repository" config --local github-auto.username davidsdd
   GIT_ROOT="$repository"
   CURRENT_REPOSITORY_OWNER="sd800"
-  CURRENT_REPOSITORY_NAME="github-setup-push-auto-script"
+  CURRENT_REPOSITORY_NAME="github-auto-script"
   ACCOUNT_USERNAMES=("davidsdd" "sd800")
   ACCOUNT_EMAILS=("davidsdd@example.com" "sd800@example.com")
   ACCOUNT_COUNT=2
@@ -1799,7 +1799,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.17.2" "$english_version" "English changelog declares release 3.17.2"
+  assert_equal "3.17.3" "$english_version" "English changelog declares release 3.17.3"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then

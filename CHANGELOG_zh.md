@@ -6,6 +6,12 @@
 
 Auto Script for GitHub Setup and Push 的重要变更记录在此文件中。
 
+## 3.17.3 - 2026-09-23
+
+### 调整
+
+- 本项目的 GitHub 仓库名称由 `github-setup-push-auto-script` 更新为 `github-auto-script`，并同步更新测试中的仓库名称。
+
 ## 3.17.2 - 2026-09-23
 
 ### 调整

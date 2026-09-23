@@ -6,6 +6,12 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.17.3 - 2026-09-23
+
+### Changed
+
+- Updated this project's GitHub repository name from `github-setup-push-auto-script` to `github-auto-script`, including the repository test fixture.
+
 ## 3.17.2 - 2026-09-23
 
 ### Changed
