@@ -176,8 +176,8 @@ prompt_repository() {
 # Release version discovery
 # -----------------------------------------------------------------------------
 
-SEMVER_PATTERN='[0-9]+(\.[0-9]+){1,3}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
-STRICT_SEMVER_PATTERN='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+SEMVER_PATTERN='[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+STRICT_SEMVER_PATTERN='[0-9]+(\.[0-9]+)+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
 SEMVER_COMPARISON=0
 RELEASE_VERSION=""
 VERSION_SOURCE=""

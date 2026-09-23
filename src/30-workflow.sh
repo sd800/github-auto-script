@@ -1197,8 +1197,8 @@ prompt_release_version_after_timeout() {
       return 0
     fi
     warn \
-      "Enter a semantic version such as 2.3.1, or press Enter to use $fallback_message." \
-      "请输入类似 2.3.1 的语义化版本号；也可以直接按 Enter 使用 ${fallback_message}。"
+      "Enter a dotted version such as 2.3.1 or 1.2.3.4, or press Enter to use $fallback_message." \
+      "请输入用点分隔的版本号，例如 2.3.1 或 1.2.3.4；也可以直接按 Enter 使用 ${fallback_message}。"
   done
 }
 

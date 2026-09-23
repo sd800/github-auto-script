@@ -6,6 +6,16 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.19.1 - 2026-09-23
+
+### Fixed
+
+- Recognize versions with two or more dotted numeric components across normal commits, initial commits, changelogs, metadata, manual entry, and historical import. A detected version such as `1.2.3.4` now proposes `Release 1.2.3.4` instead of falling back to `Initial commit`.
+
+### Tests
+
+- Covered multi-component parsing, ordering, historical dates, and real first commits from `VERSION`, `package.json`, and changelogs.
+
 ## 3.18.2 - 2026-09-23
 
 ### Added

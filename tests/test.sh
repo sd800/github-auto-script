@@ -116,6 +116,25 @@ test_semver() {
 
   compare_semver "1.2.3+one" "1.2.3+two"
   assert_equal "0" "$SEMVER_COMPARISON" "ignores build metadata"
+
+  compare_semver "1.2.3.10" "1.2.3.9"
+  assert_equal "1" "$SEMVER_COMPARISON" "compares fourth numeric components"
+
+  compare_semver "1.2.3.4.5" "1.2.3.4"
+  assert_equal "1" "$SEMVER_COMPARISON" "compares version strings beyond four components"
+
+  assert_true "accepts two-component versions" valid_release_version "1.2"
+  assert_true "accepts arbitrarily long dotted versions" valid_release_version "1.2.3.4.5"
+  if valid_release_version "1.2.3."; then
+    fail_test "rejects an empty trailing version component"
+  else
+    pass "rejects an empty trailing version component"
+  fi
+  if extract_version_from_directory_name "project-1.2.3.4.5"; then
+    assert_equal "1.2.3.4.5" "$HISTORY_DIRECTORY_VERSION" "historical folder names retain every version component"
+  else
+    fail_test "historical folder names retain every version component"
+  fi
 }
 
 write_changelog() {
@@ -134,14 +153,14 @@ test_version_resolution() {
 
   case_directory="$TEST_TEMPORARY/version-root-priority"
   mkdir -p "$case_directory"
-  printf 'v2.5.1\n' > "$case_directory/VERSION"
+  printf 'v1.2.3.4\n' > "$case_directory/VERSION"
   printf 'Version: 7.8.9\n' > "$case_directory/VERSION.txt"
   printf '{"version":"8.8.8"}\n' > "$case_directory/package.json"
   write_changelog "$case_directory/CHANGELOG.md" "9.9.9" "9.9.8"
   GIT_ROOT="$case_directory"
   VERSION_LOOKUP_LIMIT_SECONDS=0
   if resolve_release_version; then
-    assert_equal "2.5.1|VERSION" "$RELEASE_VERSION|$VERSION_SOURCE" "root VERSION wins before package.json and recursive scans"
+    assert_equal "1.2.3.4|VERSION" "$RELEASE_VERSION|$VERSION_SOURCE" "root VERSION accepts four components and wins before other sources"
   else
     fail_test "root VERSION wins before package.json and recursive scans"
   fi
@@ -227,8 +246,8 @@ test_version_resolution() {
   resolve_release_version || status=$?
   assert_equal "124" "$status" "root changelog lookup stops at its time limit"
   VERSION_LOOKUP_LIMIT_SECONDS="$saved_lookup_limit"
-  if prompt_release_version_after_timeout "Update" >/dev/null 2>&1 <<< "2.5.1"; then
-    assert_equal "2.5.1|manual" "$RELEASE_VERSION|$VERSION_POSITION" "a timeout asks for an optional release version"
+  if prompt_release_version_after_timeout "Update" >/dev/null 2>&1 <<< "2.5.1.7"; then
+    assert_equal "2.5.1.7|manual" "$RELEASE_VERSION|$VERSION_POSITION" "a timeout accepts a four-component manual version"
   else
     fail_test "a timeout asks for an optional release version"
   fi
@@ -250,20 +269,31 @@ test_version_resolution() {
   write_changelog "$case_directory/CHANGELOG.md" "4.6" "4.5"
   GIT_ROOT="$case_directory"
   if resolve_release_version; then
-    assert_equal "4.6|CHANGELOG.md" "$RELEASE_VERSION|$VERSION_SOURCE" "invalid short package version falls through while changelog keeps existing format"
+    assert_equal "4.5|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "a two-component package version is valid"
   else
-    fail_test "invalid short package version falls through while changelog keeps existing format"
+    fail_test "a two-component package version is valid"
+  fi
+  printf '{"version":"4.5."}\n' > "$case_directory/package.json"
+  if resolve_release_version; then
+    assert_equal "4.6|CHANGELOG.md" "$RELEASE_VERSION|$VERSION_SOURCE" "an invalid package version falls through to a two-component changelog version"
+  else
+    fail_test "an invalid package version falls through to a two-component changelog version"
   fi
 
   case_directory="$TEST_TEMPORARY/version-languages"
   mkdir -p "$case_directory"
-  write_changelog "$case_directory/CHANGELOG.en.md" "3.1.0" "3.0.0"
-  write_changelog "$case_directory/CHANGELOG.zh-CN.md" "3.4.0" "3.3.0"
+  write_changelog "$case_directory/CHANGELOG.en.md" "3.1.0.7" "3.0.0.8"
+  write_changelog "$case_directory/CHANGELOG.zh-CN.md" "3.4.0.9" "3.3.0.8"
   GIT_ROOT="$case_directory"
   if resolve_release_version; then
-    assert_equal "3.4.0|CHANGELOG.zh-CN.md" "$RELEASE_VERSION|$VERSION_SOURCE" "language variants use the highest version"
+    assert_equal "3.4.0.9|CHANGELOG.zh-CN.md" "$RELEASE_VERSION|$VERSION_SOURCE" "language variants use the highest multi-component version"
   else
     fail_test "language variants use the highest version"
+  fi
+  if extract_history_date_from_changelog "$case_directory/CHANGELOG.zh-CN.md" "3.4.0.9"; then
+    assert_equal "2026-08-31" "$HISTORY_CHANGELOG_DATE" "historical date lookup matches a four-component changelog version"
+  else
+    fail_test "historical date lookup matches a four-component changelog version"
   fi
 
   case_directory="$TEST_TEMPORARY/version-recursive"
@@ -324,10 +354,10 @@ test_version_resolution() {
 
   case_directory="$TEST_TEMPORARY/version-file"
   mkdir -p "$case_directory"
-  printf 'Version: v6.7.8\n' > "$case_directory/VERSION.txt"
+  printf 'Version: v6.7.8.9.10\n' > "$case_directory/VERSION.txt"
   GIT_ROOT="$case_directory"
   if resolve_release_version; then
-    assert_equal "6.7.8|VERSION.txt" "$RELEASE_VERSION|$VERSION_SOURCE" "VERSION file remains a fallback"
+    assert_equal "6.7.8.9.10|VERSION.txt" "$RELEASE_VERSION|$VERSION_SOURCE" "VERSION file retains every version component"
   else
     fail_test "VERSION file remains a fallback"
   fi
@@ -388,6 +418,7 @@ test_git_binding_and_commit() {
   local repository="$TEST_TEMPORARY/git-project"
   local initial_repository="$TEST_TEMPORARY/initial-version-project"
   local dedicated_version_repository="$TEST_TEMPORARY/dedicated-version-project"
+  local multi_part_package_repository="$TEST_TEMPORARY/initial-multi-part-package-project"
   local initial_template_repository="$TEST_TEMPORARY/initial-template-version-project"
   local fallback_repository="$TEST_TEMPORARY/fallback-message-project"
   local initial_no_version_repository="$TEST_TEMPORARY/initial-no-version-project"
@@ -448,11 +479,11 @@ test_git_binding_and_commit() {
   git -C "$initial_repository" init -q
   git -C "$initial_repository" config user.name tester
   git -C "$initial_repository" config user.email tester@example.com
-  write_changelog "$initial_repository/CHANGELOG.md" "8.9.1" "8.8.9"
+  write_changelog "$initial_repository/CHANGELOG.md" "8.9.1.2" "8.8.9.7"
   GIT_ROOT="$initial_repository"
   if prepare_and_commit; then
     message="$(git -C "$initial_repository" log -1 --pretty=%s)"
-    assert_equal "Release 8.9.1" "$message" "a detected version takes priority over Initial commit"
+    assert_equal "Release 8.9.1.2" "$message" "a four-component changelog version takes priority over Initial commit"
   else
     fail_test "first commit uses its detected release version"
   fi
@@ -461,15 +492,28 @@ test_git_binding_and_commit() {
   git -C "$dedicated_version_repository" init -q
   git -C "$dedicated_version_repository" config user.name tester
   git -C "$dedicated_version_repository" config user.email tester@example.com
-  printf '2.5.1\n' > "$dedicated_version_repository/VERSION"
+  printf '1.2.3.4\n' > "$dedicated_version_repository/VERSION"
   printf '{"version":"8.8.8"}\n' > "$dedicated_version_repository/package.json"
   write_changelog "$dedicated_version_repository/CHANGELOG.md" "9.9.9" "9.9.8"
   GIT_ROOT="$dedicated_version_repository"
   if prepare_and_commit; then
     message="$(git -C "$dedicated_version_repository" log -1 --pretty=%s)"
-    assert_equal "Release 2.5.1" "$message" "an actual commit uses the root VERSION over package and changelog"
+    assert_equal "Release 1.2.3.4" "$message" "a first commit uses every component of root VERSION over package and changelog"
   else
     fail_test "an actual commit uses the root VERSION over package and changelog"
+  fi
+
+  mkdir -p "$multi_part_package_repository"
+  git -C "$multi_part_package_repository" init -q
+  git -C "$multi_part_package_repository" config user.name tester
+  git -C "$multi_part_package_repository" config user.email tester@example.com
+  printf '{"version":"2.3.5.7.9"}\n' > "$multi_part_package_repository/package.json"
+  GIT_ROOT="$multi_part_package_repository"
+  if prepare_and_commit; then
+    message="$(git -C "$multi_part_package_repository" log -1 --pretty=%s)"
+    assert_equal "Release 2.3.5.7.9" "$message" "a first commit uses a five-component package version instead of Initial commit"
+  else
+    fail_test "a first commit uses a five-component package version instead of Initial commit"
   fi
 
   mkdir -p "$initial_template_repository"
@@ -1918,7 +1962,7 @@ test_project_release_policy() {
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
   file_version="$(sed -n '1p' "$PROJECT_DIRECTORY/VERSION")"
-  assert_equal "3.18.2" "$english_version" "English changelog declares release 3.18.2"
+  assert_equal "3.19.1" "$english_version" "English changelog declares release 3.19.1"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   assert_equal "$english_version" "$file_version" "root VERSION matches both changelogs"
   assert_equal "1" "$(awk 'END { print NR }' "$PROJECT_DIRECTORY/VERSION")" "root VERSION contains one line only"

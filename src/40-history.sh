@@ -775,8 +775,8 @@ history_add_manual_releases() {
         break
       fi
       advanced_warn \
-        "Use a semantic version such as 1.2.3 or 2.0.0-beta.1." \
-        "请输入类似 1.2.3 或 2.0.0-beta.1 的语义化版本号。"
+        "Enter a dotted version such as 1.2.3, 1.2.3.4, or 2.0.0-beta.1." \
+        "请输入用点分隔的版本号，例如 1.2.3、1.2.3.4 或 2.0.0-beta.1。"
     done
 
     date=""
@@ -1632,8 +1632,8 @@ run_historical_release_import() {
     "Use this when complete release snapshots exist as folders but no useful Git history exists." \
     "如果各个历史版本只保存在独立文件夹里、没有可用的 Git 提交记录，可以使用这个功能。"
   advanced_muted \
-    "The source folders stay read-only. Each release becomes one complete snapshot commit in semantic-version order." \
-    "脚本不会改动这些存档，而是在临时仓库中按语义化版本从旧到新生成完整快照提交。"
+    "The source folders stay read-only. Each release becomes one complete snapshot commit, ordered by its numeric version components." \
+    "脚本不会改动这些存档，而是在临时仓库中按版本号各段数字从旧到新生成完整快照提交。"
   advanced_muted \
     ".git entries and .DS_Store files are excluded. Other hidden and ignored files are included after a safety review." \
     "每一层的 .git 和 .DS_Store 都会自动排除；其他隐藏文件和被忽略文件会在安全检查后保留。"
@@ -1725,8 +1725,8 @@ Choose No: Do not assign historical dates; each commit keeps the local system ti
       "提交时间：不写入历史日期；每个提交保留 Git 创建它时自动记录的本机时间。"
   fi
   if ! advanced_prompt_yes_no \
-    "Create every listed Release X.Y.Z commit in the temporary repository now, without uploading?" \
-    "确认按刚才列出的说明创建全部 Release X.Y.Z 提交，并暂不上传吗？" \
+    "Create every listed release commit in the temporary repository now, without uploading?" \
+    "确认按刚才列出的说明创建全部版本提交，并暂不上传吗？" \
     "yes"; then
     return 0
   fi

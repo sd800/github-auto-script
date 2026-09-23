@@ -232,7 +232,7 @@ Every formal commit created by the script requires user confirmation first. For 
 
 Every changed working tree receives the same complete pre-commit file review, including the normal fast path. Long change lists are printed directly and never open Git's interactive pager. If a new directory absent from current history contains a standard project marker such as `package.json`, `pyproject.toml`, `Cargo.toml`, or `go.mod`, the script lists it and requires a separate confirmation that defaults to No. A completely new top-level directory containing 20 or more files receives the same check. A folder that contains its own unregistered `.git` directory is blocked because Git would record a repository link rather than its ordinary file contents. Changes inside a configured submodule must be committed in that submodule first. Smaller ordinary folders do not add another prompt.
 
-An ordinary valid version can produce `Release X.Y.Z` even when the value has not changed since the previous commit. The narrow exception is an unchanged common `package.json` scaffold placeholder: `0.0.0`, `0.0.1`, `0.1.0`, or `1.0.0`. These values remain eligible when first added or deliberately changed, but an unchanged placeholder does not override a more meaningful source or the normal fallback message.
+An ordinary valid version produces a message such as `Release 1.2.3.4` even on the first commit, and it remains eligible when unchanged since the previous commit. Versions may have two or more numeric components separated by dots; they are not limited to three. The narrow exception is an unchanged common `package.json` scaffold placeholder: `0.0.0`, `0.0.1`, `0.1.0`, or `1.0.0`. These values remain eligible when first added or deliberately changed, but an unchanged placeholder does not override a more meaningful source or the normal fallback message.
 
 The root `VERSION` file takes precedence. If the project root has no usable version, the script checks files directly inside every immediate child folder, but never goes deeper. Once a valid root changelog version is found, no child folders are scanned. The changelog and child-folder lookup stops after five seconds; if it has not finished, the script asks for an optional version. Press Enter to keep `Initial commit` or `Update`. Version sources are checked in this order:
 
@@ -249,13 +249,13 @@ Parsing supports newest-first and oldest-first changelogs, common English and Ch
 
 The advanced menu can reconstruct linear Git history from complete release folders that do not have useful Git history.
 
-It discovers or accepts version mappings, sorts them by SemVer, and builds one complete `Release X.Y.Z` snapshot commit per version in a temporary repository. Files removed by a later release disappear from that later snapshot. Normal hidden files and ignored files are preserved, while `.git` and `.DS_Store` are excluded at every depth.
+It discovers or accepts version mappings, sorts their numeric components from oldest to newest, and builds one complete `Release <version>` snapshot commit per version in a temporary repository. Files removed by a later release disappear from that later snapshot. Normal hidden files and ignored files are preserved, while `.git` and `.DS_Store` are excluded at every depth.
 
 When archived releases lack a root `.gitignore`, the user can paste one shared set of rules directly into the terminal. It is added only to missing reconstructed snapshots and never written back to the source folders.
 
 The flow checks for sensitive-looking and oversized files, displays `git log --oneline --reverse`, and verifies the selected GitHub identity before publishing. Safety scans and snapshot construction show `[current/total]` progress, and publication streams Git's real transfer progress. Reconstructed commit timestamps use reliable detected release dates by default. The user can decline; in that case, no historical dates are assigned and each commit keeps the local system time that Git records automatically when creating it.
 
-Before creating reconstructed commits, the release plan displays every exact `Release X.Y.Z` message. One explicit batch confirmation covers the listed history; the internal builder refuses to create even the first commit unless that confirmation has been given.
+Before creating reconstructed commits, the release plan displays every exact `Release <version>` message. One explicit batch confirmation covers the listed history; the internal builder refuses to create even the first commit unless that confirmation has been given.
 
 Replacing an existing remote `main` requires explicit confirmation and an exact `--force-with-lease`. No backup branch is created, and other remote branches are unchanged. Historical reconstruction creates release commits only; it does not create or modify Git tags.
 
