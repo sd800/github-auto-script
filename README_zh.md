@@ -231,15 +231,16 @@ gh repo clone owner/repository
 
 普通的有效版本号即使与上次提交相同，仍可生成 `Release X.Y.Z`。唯一的例外是 `package.json` 中未发生变化的常见脚手架占位版本：`0.0.0`、`0.0.1`、`0.1.0` 或 `1.0.0`。这些值第一次加入项目或后来确实被改成该值时仍然有效；只有原样保留的占位版本不会覆盖更可靠的版本来源，也不会取代正常的备用提交说明。
 
-程序始终先检查根目录 `package.json`，其中的版本符合条件时立即采用；只有必要时才进行递归查找。递归查找最多运行 5 秒，届时若仍未完成，程序会停止查找并询问是否手动输入本次版本号；直接按 Enter 则继续使用 `Initial commit` 或 `Update`。版本来源按以下顺序检查：
+根目录的 `VERSION` 最优先。只有根目录找不到可用版本时，程序才检查所有直属子文件夹中的文件；不会继续深入孙级目录。根目录的 CHANGELOG 一旦找到有效版本，也不会再检查子文件夹。CHANGELOG 和子文件夹的查找最多进行 5 秒；如果仍未完成，程序会询问是否手动填写版本号。直接按 Enter，提交说明就保持为 `Initial commit` 或 `Update`。查找顺序如下：
 
-1. 根目录 `package.json` 中的有效版本。
-2. 递归查找项目根目录及所有下级文件夹中的 `CHANGELOG*`，其中包括各语言版本，并采用整个项目中识别到的最高有效版本。
-3. 根目录 `VERSION*` 文件。
-4. 递归 `VERSION*` 文件。
-5. 第一次提交回退为 `Initial commit`，后续提交回退为 `Update`。
+1. 根目录 `VERSION`，然后是根目录 `VERSION.txt`、`VERSION.md` 和其他 `VERSION*` 文件。
+2. 根目录 `package.json` 中的有效版本。
+3. 根目录的项目元数据：`manifest.json`、`manifest.webmanifest`、`pyproject.toml`、`Cargo.toml`、`composer.json`、`pubspec.yaml`、`deno.json` 和 `bower.json`。
+4. 根目录的 `CHANGELOG*`，包括各语言版本；若有多个有效版本，采用其中最高的版本。
+5. 所有直属子文件夹中的文件：先查 `VERSION*`，再查 `package.json`、上述元数据格式，最后查 `CHANGELOG*`。同一类文件取最高有效版本；`VERSION`、`VERSION.txt` 等仍按文件名优先级查找。
+6. 第一次提交回退为 `Initial commit`，后续提交回退为 `Update`。
 
-解析支持新版本在顶部或底部、常见英文和中文日期、预发布版本、构建信息、可选 `v` 前缀、方括号和多种 Unicode 破折号。项目自己的发布、分发和构建目录会参与查找；Git 元数据、依赖、缓存、虚拟环境和覆盖率目录会排除。
+解析支持新版本在顶部或底部、常见英文和中文日期、预发布版本、构建信息、可选 `v` 前缀、方括号和多种 Unicode 破折号。查找直属子文件夹时会排除 Git 元数据、依赖、缓存、虚拟环境和覆盖率目录。
 
 ## 导入历史发布版本
 

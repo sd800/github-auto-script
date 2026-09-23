@@ -1176,8 +1176,8 @@ prompt_release_version_after_timeout() {
   local entered=""
 
   warn \
-    "Automatic version lookup was stopped after 5 seconds so this commit does not keep you waiting." \
-    "自动查找版本号已在 5 秒后停止，避免本次提交继续等待。"
+    "Version lookup stopped after 5 seconds so this commit does not keep you waiting." \
+    "查找版本号已在 5 秒后停止，避免本次提交继续等待。"
   muted \
     "If this is a release, enter its version now (for example, 2.3.1). Press Enter to use: $fallback_message" \
     "如果本次需要发布版本，请现在输入版本号（例如 2.3.1）；直接按 Enter 将使用：${fallback_message}"
@@ -1329,8 +1329,8 @@ prepare_and_commit() {
   fi
 
   info \
-    "Checking package.json first, then looking for a release version elsewhere if needed..." \
-    "正在先检查 package.json；如有需要，再从其他位置查找发布版本号……"
+    "Checking project version files, metadata, and changelogs..." \
+    "正在查找项目中的版本文件、元数据和更新记录……"
   resolve_release_version yes || version_status=$?
   if [ "$version_status" -eq 0 ]; then
     proposed="${RELEASE_PREFIX}${RELEASE_VERSION}"

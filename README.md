@@ -230,15 +230,16 @@ Every changed working tree receives the same complete pre-commit file review, in
 
 An ordinary valid version can produce `Release X.Y.Z` even when the value has not changed since the previous commit. The narrow exception is an unchanged common `package.json` scaffold placeholder: `0.0.0`, `0.0.1`, `0.1.0`, or `1.0.0`. These values remain eligible when first added or deliberately changed, but an unchanged placeholder does not override a more meaningful source or the normal fallback message.
 
-The root `package.json` is always checked first and returns immediately when its version is eligible. Only the recursive fallback search is then needed. That search stops after five seconds; if it has not finished, the script asks for an optional version and lets Enter keep `Initial commit` or `Update`. Version sources are checked in this order:
+The root `VERSION` file takes precedence. If the project root has no usable version, the script checks files directly inside every immediate child folder, but never goes deeper. Once a valid root changelog version is found, no child folders are scanned. The changelog and child-folder lookup stops after five seconds; if it has not finished, the script asks for an optional version. Press Enter to keep `Initial commit` or `Update`. Version sources are checked in this order:
 
-1. A valid root `package.json` version.
-2. Every project-owned `CHANGELOG*` file in the root and all nested folders, including multilingual variants, using the highest valid version found anywhere in the project.
-3. Root `VERSION*` files.
-4. Recursive `VERSION*` files.
-5. The fallback message `Initial commit` for the first commit, or `Update` for later commits.
+1. Root `VERSION`, then root `VERSION.txt`, `VERSION.md`, and other `VERSION*` files.
+2. A valid root `package.json` version.
+3. Root project metadata: `manifest.json`, `manifest.webmanifest`, `pyproject.toml`, `Cargo.toml`, `composer.json`, `pubspec.yaml`, `deno.json`, and `bower.json`.
+4. Root `CHANGELOG*` files, including multilingual variants, using the highest valid version among them.
+5. Files directly inside immediate child folders: `VERSION*`, then `package.json`, then the same metadata formats, then `CHANGELOG*`. Within a tier, the highest valid version wins (except that `VERSION` and `VERSION.txt` retain their filename priority).
+6. The fallback message `Initial commit` for the first commit, or `Update` for later commits.
 
-Parsing supports newest-first and oldest-first changelogs, common English and Chinese dates, prereleases, build metadata, optional `v` prefixes, brackets, and Unicode dash variants. Project-owned release, distribution, and build folders participate in the search. Git metadata, dependency, cache, virtual-environment, and coverage directories are excluded.
+Parsing supports newest-first and oldest-first changelogs, common English and Chinese dates, prereleases, build metadata, optional `v` prefixes, brackets, and Unicode dash variants. Git metadata, dependency, cache, virtual-environment, and coverage directories are excluded from child-folder lookup.
 
 ## Historical release import
 

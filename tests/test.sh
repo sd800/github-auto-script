@@ -132,15 +132,83 @@ test_version_resolution() {
   local status=0
   local saved_lookup_limit="$VERSION_LOOKUP_LIMIT_SECONDS"
 
+  case_directory="$TEST_TEMPORARY/version-root-priority"
+  mkdir -p "$case_directory"
+  printf 'v2.5.1\n' > "$case_directory/VERSION"
+  printf 'Version: 7.8.9\n' > "$case_directory/VERSION.txt"
+  printf '{"version":"8.8.8"}\n' > "$case_directory/package.json"
+  write_changelog "$case_directory/CHANGELOG.md" "9.9.9" "9.9.8"
+  GIT_ROOT="$case_directory"
+  VERSION_LOOKUP_LIMIT_SECONDS=0
+  if resolve_release_version; then
+    assert_equal "2.5.1|VERSION" "$RELEASE_VERSION|$VERSION_SOURCE" "root VERSION wins before package.json and recursive scans"
+  else
+    fail_test "root VERSION wins before package.json and recursive scans"
+  fi
+  printf 'not a release number\n' > "$case_directory/VERSION"
+  if resolve_release_version; then
+    assert_equal "7.8.9|VERSION.txt" "$RELEASE_VERSION|$VERSION_SOURCE" "root VERSION.txt remains an immediate fallback"
+  else
+    fail_test "root VERSION.txt remains an immediate fallback"
+  fi
+  printf 'not a release number\n' > "$case_directory/VERSION.txt"
+  if resolve_release_version; then
+    assert_equal "8.8.8|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "invalid root VERSION files fall through to package.json"
+  else
+    fail_test "invalid root VERSION files fall through to package.json"
+  fi
+  VERSION_LOOKUP_LIMIT_SECONDS="$saved_lookup_limit"
+
+  case_directory="$TEST_TEMPORARY/version-root-metadata"
+  mkdir -p "$case_directory"
+  printf '{"name":"example","version":"2.7.1"}\n' > "$case_directory/manifest.json"
+  write_changelog "$case_directory/CHANGELOG.md" "9.9.9" "9.9.8"
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "2.7.1|manifest.json" "$RELEASE_VERSION|$VERSION_SOURCE" "root manifest.json version precedes root changelog"
+  else
+    fail_test "root manifest.json version precedes root changelog"
+  fi
+
+  case_directory="$TEST_TEMPORARY/version-root-toml"
+  mkdir -p "$case_directory"
+  printf '[tool.black]\nversion = "9.9.9"\n[project]\nname = "example"\nversion = "3.2.1"\n' > "$case_directory/pyproject.toml"
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "3.2.1|pyproject.toml" "$RELEASE_VERSION|$VERSION_SOURCE" "pyproject.toml reads the project version, not another tool section"
+  else
+    fail_test "pyproject.toml reads the project version, not another tool section"
+  fi
+
+  case_directory="$TEST_TEMPORARY/version-root-cargo"
+  mkdir -p "$case_directory"
+  printf '[dependencies]\nversion = "9.9.9"\n[package]\nname = "example"\nversion = "3.6.1"\n' > "$case_directory/Cargo.toml"
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "3.6.1|Cargo.toml" "$RELEASE_VERSION|$VERSION_SOURCE" "Cargo.toml reads the package version"
+  else
+    fail_test "Cargo.toml reads the package version"
+  fi
+
+  case_directory="$TEST_TEMPORARY/version-root-pubspec"
+  mkdir -p "$case_directory"
+  printf 'name: example\nversion: 2.9.1+3\ndependencies:\n  version: 9.9.9\n' > "$case_directory/pubspec.yaml"
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "2.9.1+3|pubspec.yaml" "$RELEASE_VERSION|$VERSION_SOURCE" "pubspec.yaml reads its top-level version"
+  else
+    fail_test "pubspec.yaml reads its top-level version"
+  fi
+
   case_directory="$TEST_TEMPORARY/version-package"
   mkdir -p "$case_directory"
   printf '{"version":"4.5.6"}\n' > "$case_directory/package.json"
   write_changelog "$case_directory/CHANGELOG.md" "9.0.0" "8.0.0"
   GIT_ROOT="$case_directory"
   if resolve_release_version; then
-    assert_equal "4.5.6|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "package.json has highest source priority"
+    assert_equal "4.5.6|package.json" "$RELEASE_VERSION|$VERSION_SOURCE" "package.json precedes recursive version sources"
   else
-    fail_test "package.json has highest source priority"
+    fail_test "package.json precedes recursive version sources"
   fi
 
   VERSION_LOOKUP_LIMIT_SECONDS=0
@@ -153,10 +221,11 @@ test_version_resolution() {
 
   case_directory="$TEST_TEMPORARY/version-timeout"
   mkdir -p "$case_directory"
+  write_changelog "$case_directory/CHANGELOG.md" "2.5.1" "2.5.0"
   GIT_ROOT="$case_directory"
   status=0
   resolve_release_version || status=$?
-  assert_equal "124" "$status" "recursive version lookup stops at its time limit"
+  assert_equal "124" "$status" "root changelog lookup stops at its time limit"
   VERSION_LOOKUP_LIMIT_SECONDS="$saved_lookup_limit"
   if prompt_release_version_after_timeout "Update" >/dev/null 2>&1 <<< "2.5.1"; then
     assert_equal "2.5.1|manual" "$RELEASE_VERSION|$VERSION_POSITION" "a timeout asks for an optional release version"
@@ -201,13 +270,45 @@ test_version_resolution() {
   mkdir -p "$case_directory/app" "$case_directory/dist/archive" "$case_directory/node_modules/dependency"
   write_changelog "$case_directory/CHANGELOG.md" "2.0.0" "1.0.0"
   write_changelog "$case_directory/app/CHANGELOG.fr.md" "5.0.0" "4.0.0"
+  write_changelog "$case_directory/dist/CHANGELOG.es.md" "5.5.0" "5.1.0"
   write_changelog "$case_directory/dist/archive/CHANGELOG_zh.md" "6.0.0" "5.0.0"
   write_changelog "$case_directory/node_modules/dependency/CHANGELOG.md" "99.0.0" "98.0.0"
   GIT_ROOT="$case_directory"
   if resolve_release_version; then
-    assert_equal "6.0.0|dist/archive/CHANGELOG_zh.md" "$RELEASE_VERSION|$VERSION_SOURCE" "recursive scan includes all project folders and skips dependencies"
+    assert_equal "2.0.0|CHANGELOG.md" "$RELEASE_VERSION|$VERSION_SOURCE" "a valid root changelog stops before scanning nested folders"
   else
-    fail_test "recursive scan includes all project folders and skips dependencies"
+    fail_test "a valid root changelog stops before scanning nested folders"
+  fi
+  printf 'No release entries here\n' > "$case_directory/CHANGELOG.md"
+  printf 'Version: 7.8.9\n' > "$case_directory/app/VERSION.txt"
+  if resolve_release_version; then
+    assert_equal "7.8.9|app/VERSION.txt" "$RELEASE_VERSION|$VERSION_SOURCE" "direct child VERSION files are used before child changelogs"
+  else
+    fail_test "direct child VERSION files are used before child changelogs"
+  fi
+  printf 'not a version\n' > "$case_directory/app/VERSION.txt"
+  if resolve_release_version; then
+    assert_equal "5.5.0|dist/CHANGELOG.es.md" "$RELEASE_VERSION|$VERSION_SOURCE" "all direct child changelogs compete while grandchild changelog is ignored"
+  else
+    fail_test "all direct child changelogs compete while grandchild changelog is ignored"
+  fi
+  printf 'No release entries here\n' > "$case_directory/app/CHANGELOG.fr.md"
+  printf 'No release entries here\n' > "$case_directory/dist/CHANGELOG.es.md"
+  if resolve_release_version; then
+    fail_test "grandchild and dependency versions alone do not qualify"
+  else
+    pass "grandchild and dependency versions alone do not qualify"
+  fi
+
+  case_directory="$TEST_TEMPORARY/version-direct-child-metadata"
+  mkdir -p "$case_directory/app" "$case_directory/dist"
+  printf '{"version":"2.8.1"}\n' > "$case_directory/app/manifest.json"
+  write_changelog "$case_directory/dist/CHANGELOG.md" "7.7.7" "6.6.6"
+  GIT_ROOT="$case_directory"
+  if resolve_release_version; then
+    assert_equal "2.8.1|app/manifest.json" "$RELEASE_VERSION|$VERSION_SOURCE" "direct child manifest version is recognized before child changelog"
+  else
+    fail_test "direct child manifest version is recognized before child changelog"
   fi
 
   case_directory="$TEST_TEMPORARY/version-recursive-tie"
@@ -286,6 +387,7 @@ test_alias_allocation() {
 test_git_binding_and_commit() {
   local repository="$TEST_TEMPORARY/git-project"
   local initial_repository="$TEST_TEMPORARY/initial-version-project"
+  local dedicated_version_repository="$TEST_TEMPORARY/dedicated-version-project"
   local initial_template_repository="$TEST_TEMPORARY/initial-template-version-project"
   local fallback_repository="$TEST_TEMPORARY/fallback-message-project"
   local initial_no_version_repository="$TEST_TEMPORARY/initial-no-version-project"
@@ -353,6 +455,21 @@ test_git_binding_and_commit() {
     assert_equal "Release 8.9.1" "$message" "a detected version takes priority over Initial commit"
   else
     fail_test "first commit uses its detected release version"
+  fi
+
+  mkdir -p "$dedicated_version_repository"
+  git -C "$dedicated_version_repository" init -q
+  git -C "$dedicated_version_repository" config user.name tester
+  git -C "$dedicated_version_repository" config user.email tester@example.com
+  printf '2.5.1\n' > "$dedicated_version_repository/VERSION"
+  printf '{"version":"8.8.8"}\n' > "$dedicated_version_repository/package.json"
+  write_changelog "$dedicated_version_repository/CHANGELOG.md" "9.9.9" "9.9.8"
+  GIT_ROOT="$dedicated_version_repository"
+  if prepare_and_commit; then
+    message="$(git -C "$dedicated_version_repository" log -1 --pretty=%s)"
+    assert_equal "Release 2.5.1" "$message" "an actual commit uses the root VERSION over package and changelog"
+  else
+    fail_test "an actual commit uses the root VERSION over package and changelog"
   fi
 
   mkdir -p "$initial_template_repository"
@@ -1799,7 +1916,7 @@ test_project_release_policy() {
 
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
-  assert_equal "3.17.3" "$english_version" "English changelog declares release 3.17.3"
+  assert_equal "3.18.1" "$english_version" "English changelog declares release 3.18.1"
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   if [[ "$english_version" != *4* ]] &&
      [[ "$english_version" =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then

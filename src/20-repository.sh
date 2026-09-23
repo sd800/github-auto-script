@@ -184,7 +184,6 @@ VERSION_SOURCE=""
 VERSION_POSITION=""
 VERSION_LOOKUP_LIMIT_SECONDS="${VERSION_LOOKUP_LIMIT_SECONDS:-5}"
 VERSION_LOOKUP_DEADLINE=0
-VERSION_LOOKUP_TIMED_OUT=false
 
 is_common_package_placeholder_version() {
   case "$1" in
@@ -229,6 +228,9 @@ release_version_eligible_for_commit() {
     package)
       previous_version="$(get_package_version_from_file "$previous_file" || true)"
       ;;
+    metadata)
+      previous_version="$(extract_version_from_metadata_file "$previous_file" "$relative_path" || true)"
+      ;;
     changelog)
       previous_version="$(
         extract_version_from_changelog "$previous_file" >/dev/null 2>&1 &&
@@ -256,23 +258,6 @@ release_version_eligible_for_commit() {
 
 version_lookup_has_time() {
   [ "$SECONDS" -lt "$VERSION_LOOKUP_DEADLINE" ]
-}
-
-wait_for_version_lookup_process() {
-  local process_id="$1"
-  local status=0
-
-  while kill -0 "$process_id" 2>/dev/null; do
-    if ! version_lookup_has_time; then
-      kill -TERM "$process_id" 2>/dev/null || true
-      wait "$process_id" 2>/dev/null || true
-      VERSION_LOOKUP_TIMED_OUT=true
-      return 124
-    fi
-    sleep 0.1
-  done
-  wait "$process_id" || status=$?
-  return "$status"
 }
 
 strip_leading_zeroes() {
@@ -522,7 +507,7 @@ extract_version_from_changelog() {
   return 2
 }
 
-get_package_version_from_file() {
+get_json_version_from_file() {
   local file="$1"
   local version=""
 
@@ -566,7 +551,107 @@ except Exception:
 }
 
 get_package_version() {
-  get_package_version_from_file "$GIT_ROOT/package.json"
+  get_json_version_from_file "$GIT_ROOT/package.json"
+}
+
+get_package_version_from_file() {
+  get_json_version_from_file "$1"
+}
+
+extract_version_from_metadata_file() {
+  local file="$1"
+  local name="${2##*/}"
+  local version=""
+  local sections=""
+
+  [ -f "$file" ] || return 1
+  case "$(lowercase "$name")" in
+    manifest.json|manifest.webmanifest|composer.json|deno.json|bower.json)
+      get_json_version_from_file "$file"
+      return
+      ;;
+    pyproject.toml)
+      sections='pyproject'
+      ;;
+    cargo.toml)
+      sections='cargo'
+      ;;
+    pubspec.yaml)
+      version="$(awk '
+        /^version[[:space:]]*:/ {
+          value=$0
+          sub(/^version[[:space:]]*:[[:space:]]*/, "", value)
+          sub(/[[:space:]]+#.*$/, "", value)
+          sub(/^"/, "", value)
+          sub(/"$/, "", value)
+          sub(/^\047/, "", value)
+          sub(/\047$/, "", value)
+          print value
+          exit
+        }
+      ' "$file")"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [ -n "$sections" ]; then
+    version="$(awk -v kind="$sections" '
+      /^[[:space:]]*\[/ {
+        section=$0
+        gsub(/[[:space:]]/, "", section)
+      }
+      ((kind == "pyproject" && (section == "[project]" || section == "[tool.poetry]")) ||
+       (kind == "cargo" && section == "[package]")) &&
+      /^[[:space:]]*version[[:space:]]*=/ {
+        value=$0
+        sub(/^[^=]*=[[:space:]]*/, "", value)
+        if (value ~ /^"/) {
+          sub(/^"/, "", value)
+          sub(/".*$/, "", value)
+        } else if (value ~ /^\047/) {
+          sub(/^\047/, "", value)
+          sub(/\047.*$/, "", value)
+        }
+        print value
+        exit
+      }
+    ' "$file")"
+  fi
+  if valid_release_version "$version"; then
+    printf '%s' "$version"
+    return 0
+  fi
+  return 1
+}
+
+resolve_root_metadata_files() {
+  local changed_only="${1:-no}"
+  local file=""
+  local version=""
+
+  for file in \
+    "$GIT_ROOT/manifest.json" \
+    "$GIT_ROOT/manifest.webmanifest" \
+    "$GIT_ROOT/pyproject.toml" \
+    "$GIT_ROOT/Cargo.toml" \
+    "$GIT_ROOT/composer.json" \
+    "$GIT_ROOT/pubspec.yaml" \
+    "$GIT_ROOT/deno.json" \
+    "$GIT_ROOT/bower.json"; do
+    if version="$(extract_version_from_metadata_file "$file" "$file")"; then
+      if [ "$changed_only" = yes ] &&
+         ! release_version_eligible_for_commit "${file#"$GIT_ROOT"/}" metadata "$version"; then
+        continue
+      fi
+      RELEASE_VERSION="$version"
+      VERSION_SOURCE="${file#"$GIT_ROOT"/}"
+      VERSION_POSITION="metadata"
+      return 0
+    fi
+  done
+  return 1
 }
 
 resolve_highest_changelog_from_stream() {
@@ -576,15 +661,12 @@ resolve_highest_changelog_from_stream() {
   local best_file=""
   local best_position=""
   local best_relative=""
-  local best_depth=0
   local relative=""
-  local depth=0
   local choose=false
   local status=0
 
   while IFS= read -r file; do
     if ! version_lookup_has_time; then
-      VERSION_LOOKUP_TIMED_OUT=true
       return 124
     fi
     [ -f "$file" ] || continue
@@ -594,7 +676,6 @@ resolve_highest_changelog_from_stream() {
          ! release_version_eligible_for_commit "$relative" changelog "$CHANGELOG_EXTRACTED_VERSION"; then
         continue
       fi
-      depth="$(printf '%s' "$relative" | awk -F/ '{ print NF }')"
       choose=false
       if [ -z "$best_version" ]; then
         choose=true
@@ -602,9 +683,7 @@ resolve_highest_changelog_from_stream() {
         compare_semver "$CHANGELOG_EXTRACTED_VERSION" "$best_version"
         if [ "$SEMVER_COMPARISON" -gt 0 ]; then
           choose=true
-        elif [ "$SEMVER_COMPARISON" -eq 0 ] &&
-             { [ "$depth" -lt "$best_depth" ] ||
-               { [ "$depth" -eq "$best_depth" ] && [[ "$relative" < "$best_relative" ]]; }; }; then
+        elif [ "$SEMVER_COMPARISON" -eq 0 ] && [[ "$relative" < "$best_relative" ]]; then
           choose=true
         fi
       fi
@@ -613,7 +692,6 @@ resolve_highest_changelog_from_stream() {
         best_file="$file"
         best_position="$CHANGELOG_POSITION"
         best_relative="$relative"
-        best_depth="$depth"
       fi
     else
       status=$?
@@ -634,42 +712,28 @@ resolve_highest_changelog_from_stream() {
   return 1
 }
 
-resolve_project_changelogs() {
+resolve_root_changelogs() {
   local changed_only="${1:-no}"
   local temporary=""
-  local process_id=""
   local status=0
+  local file=""
 
   temporary="$(safe_mktemp_file "${TMPDIR:-/tmp}" "changelogs")" || return 1
-  find "$GIT_ROOT" \
-    \( -type d \( \
-      -name .git -o \
-      -name node_modules -o \
-      -name vendor -o \
-      -name .venv -o \
-      -name venv -o \
-      -name coverage -o \
-      -name .cache -o \
-      -name __pycache__ \
-    \) -prune \) -o \
-    \( -type f -iname 'CHANGELOG*' -print \) > "$temporary" &
-  process_id=$!
-  wait_for_version_lookup_process "$process_id" || status=$?
-  if [ "$status" -ne 0 ]; then
-    rm -f "$temporary"
-    return "$status"
-  fi
+  for file in "$GIT_ROOT"/*; do
+    if ! version_lookup_has_time; then
+      rm -f "$temporary"
+      return 124
+    fi
+    [ -f "$file" ] || continue
+    case "$(lowercase "${file##*/}")" in
+      changelog*) printf '%s\n' "$file" >> "$temporary" ;;
+    esac
+  done
   LC_ALL=C sort -o "$temporary" "$temporary"
-
   status=0
   resolve_highest_changelog_from_stream "$changed_only" < "$temporary" || status=$?
-  if [ "$status" -eq 0 ]; then
-    rm -f "$temporary"
-    return 0
-  fi
   rm -f "$temporary"
-  [ "$status" -eq 124 ] && return 124
-  return 1
+  return "$status"
 }
 
 extract_version_from_version_file() {
@@ -728,25 +792,15 @@ version_filename_priority() {
   esac
 }
 
-resolve_version_files() {
+resolve_root_version_files() {
   local changed_only="${1:-no}"
   local file=""
   local name=""
   local priority=0
   local version=""
-  local temporary=""
-  local relative=""
-  local depth=""
-  local process_id=""
-  local status=0
-  local ordered=""
 
   while [ "$priority" -le 3 ]; do
     for file in "$GIT_ROOT"/*; do
-      if ! version_lookup_has_time; then
-        VERSION_LOOKUP_TIMED_OUT=true
-        return 124
-      fi
       [ -f "$file" ] || continue
       name="$(basename "$file")"
       case "$(lowercase "$name")" in
@@ -770,57 +824,117 @@ resolve_version_files() {
     done
     priority=$((priority + 1))
   done
+  return 1
+}
 
-  temporary="$(safe_mktemp_file "${TMPDIR:-/tmp}" "versions")" || return 1
-  ordered="$(safe_mktemp_file "${TMPDIR:-/tmp}" "ordered-versions")" || {
-    rm -f "$temporary"
-    return 1
-  }
-  find "$GIT_ROOT" \
-    \( -type d -name .git -prune \) -o \
-    \( -type f -iname 'VERSION*' -print \) > "$temporary" &
-  process_id=$!
-  wait_for_version_lookup_process "$process_id" || status=$?
-  if [ "$status" -ne 0 ]; then
-    rm -f "$temporary" "$ordered"
-    return "$status"
+resolve_direct_child_versions() {
+  local changed_only="${1:-no}"
+  local candidates=""
+  local kind=""
+  local file=""
+  local name=""
+  local version=""
+  local position=""
+  local priority=0
+  local best_priority=9
+  local best_version=""
+  local best_file=""
+  local best_position=""
+  local choose=false
+
+  candidates="$(safe_mktemp_file "${TMPDIR:-/tmp}" "child-versions")" || return 1
+  if ! version_lookup_has_time; then
+    rm -f "$candidates"
+    return 124
+  fi
+  find "$GIT_ROOT" -mindepth 1 -maxdepth 2 \
+    \( -type d \( \
+      -name .git -o -name node_modules -o -name vendor -o \
+      -name .venv -o -name venv -o -name coverage -o \
+      -name .cache -o -name __pycache__ \
+    \) -prune \) -o \
+    \( -mindepth 2 -type f \( \
+      -iname 'VERSION*' -o -iname 'CHANGELOG*' -o \
+      -name package.json -o -name manifest.json -o \
+      -name manifest.webmanifest -o -name pyproject.toml -o \
+      -name Cargo.toml -o -name composer.json -o \
+      -name pubspec.yaml -o -name deno.json -o \
+      -name bower.json \
+    \) -print0 \) > "$candidates" 2>/dev/null || {
+      rm -f "$candidates"
+      return 1
+    }
+  if ! version_lookup_has_time; then
+    rm -f "$candidates"
+    return 124
   fi
 
-  while IFS= read -r file; do
-    if ! version_lookup_has_time; then
-      VERSION_LOOKUP_TIMED_OUT=true
-      rm -f "$temporary" "$ordered"
-      return 124
-    fi
-    [ "$(dirname "$file")" != "$GIT_ROOT" ] || continue
-    relative="${file#"$GIT_ROOT"/}"
-    depth="$(printf '%s' "$relative" | awk -F/ '{ print NF }')"
-    printf '%s|%s|%s\n' \
-      "$depth" \
-      "$(version_filename_priority "$(basename "$file")")" \
-      "$file" >> "$ordered"
-  done < "$temporary"
-
-  while IFS='|' read -r depth priority file; do
-    if ! version_lookup_has_time; then
-      VERSION_LOOKUP_TIMED_OUT=true
-      rm -f "$temporary" "$ordered"
-      return 124
-    fi
-    if version="$(extract_version_from_version_file "$file")"; then
+  for kind in version-file package metadata changelog; do
+    best_priority=9
+    best_version=""
+    best_file=""
+    best_position=""
+    while IFS= read -r -d '' file; do
+      if ! version_lookup_has_time; then
+        rm -f "$candidates"
+        return 124
+      fi
+      name="${file##*/}"
+      version=""
+      position="$kind"
+      priority=0
+      case "$kind" in
+        version-file)
+          case "$(lowercase "$name")" in version*) ;; *) continue ;; esac
+          priority="$(version_filename_priority "$name")"
+          version="$(extract_version_from_version_file "$file" || true)"
+          ;;
+        package)
+          [ "$name" = package.json ] || continue
+          version="$(get_json_version_from_file "$file" || true)"
+          ;;
+        metadata)
+          version="$(extract_version_from_metadata_file "$file" "$name" || true)"
+          ;;
+        changelog)
+          case "$(lowercase "$name")" in changelog*) ;; *) continue ;; esac
+          if extract_version_from_changelog "$file"; then
+            version="$CHANGELOG_EXTRACTED_VERSION"
+            position="$CHANGELOG_POSITION"
+          fi
+          ;;
+      esac
+      [ -n "$version" ] || continue
       if [ "$changed_only" = yes ] &&
-         ! release_version_eligible_for_commit "${file#"$GIT_ROOT"/}" version-file "$version"; then
+         ! release_version_eligible_for_commit "${file#"$GIT_ROOT"/}" "$kind" "$version"; then
         continue
       fi
-      RELEASE_VERSION="$version"
-      VERSION_SOURCE="${file#"$GIT_ROOT"/}"
-      VERSION_POSITION="version-file"
-      rm -f "$temporary" "$ordered"
+      choose=false
+      if [ -z "$best_version" ] || [ "$priority" -lt "$best_priority" ]; then
+        choose=true
+      elif [ "$priority" -eq "$best_priority" ]; then
+        compare_semver "$version" "$best_version"
+        if [ "$SEMVER_COMPARISON" -gt 0 ] ||
+           { [ "$SEMVER_COMPARISON" -eq 0 ] && [[ "$file" < "$best_file" ]]; }; then
+          choose=true
+        fi
+      fi
+      if [ "$choose" = true ]; then
+        best_priority="$priority"
+        best_version="$version"
+        best_file="$file"
+        best_position="$position"
+      fi
+    done < "$candidates"
+    if [ -n "$best_version" ]; then
+      RELEASE_VERSION="$best_version"
+      VERSION_SOURCE="${best_file#"$GIT_ROOT"/}"
+      VERSION_POSITION="$best_position"
+      rm -f "$candidates"
       return 0
     fi
-  done < <(sort -t '|' -k1,1n -k2,2n -k3,3 "$ordered")
-
-  rm -f "$temporary" "$ordered"
+  done
+  rm -f "$candidates"
   return 1
 }
 
@@ -832,7 +946,10 @@ resolve_release_version() {
   RELEASE_VERSION=""
   VERSION_SOURCE=""
   VERSION_POSITION=""
-  VERSION_LOOKUP_TIMED_OUT=false
+
+  if resolve_root_version_files "$changed_only"; then
+    return 0
+  fi
 
   if package_version="$(get_package_version)" &&
      { [ "$changed_only" != yes ] ||
@@ -843,20 +960,23 @@ resolve_release_version() {
     return 0
   fi
 
+  if resolve_root_metadata_files "$changed_only"; then
+    return 0
+  fi
+
   VERSION_LOOKUP_DEADLINE=$((SECONDS + VERSION_LOOKUP_LIMIT_SECONDS))
   status=0
-  resolve_project_changelogs "$changed_only" || status=$?
+  resolve_root_changelogs "$changed_only" || status=$?
   if [ "$status" -eq 0 ]; then
     return 0
   elif [ "$status" -eq 124 ]; then
     return 124
   fi
+
   status=0
-  resolve_version_files "$changed_only" || status=$?
-  if [ "$status" -eq 0 ]; then
-    return 0
-  elif [ "$status" -eq 124 ]; then
-    return 124
+  resolve_direct_child_versions "$changed_only" || status=$?
+  if [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; then
+    return "$status"
   fi
 
   return 1

@@ -6,6 +6,17 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.18.1 - 2026-09-23
+
+### Changed
+
+- Give a valid root `VERSION` file the highest discovery priority, followed by other root `VERSION*` files, `package.json`, common project metadata (including `manifest.json`), and root changelogs. Choose the highest valid root changelog version and stop there. Only when the root has no usable version, inspect version sources in all immediate child folders; never descend further.
+- Keep the five-second limit and optional manual-version prompt for changelog and child-folder lookup.
+
+### Tests
+
+- Covered root-source precedence, metadata parsing, root changelog short-circuiting, one-level child lookup, exclusion of deeper files, and an actual first commit using the root `VERSION` value.
+
 ## 3.17.3 - 2026-09-23
 
 ### Changed
