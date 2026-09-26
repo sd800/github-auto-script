@@ -6,6 +6,20 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.19.3 - 2026-09-25
+
+### Changed
+
+- Explain the purpose and main commands of the copyable `g.sh` launcher in its header comments, without changing how it runs.
+
+### Fixed
+
+- Allow `g.sh` in a subfolder of an existing Git repository to initialize and use an independent nested repository. Read-only checks still leave that subfolder untouched.
+
+### Tests
+
+- Covered nested initialization, reuse on later runs, and isolation from the enclosing repository.
+
 ## 3.19.2 - 2026-09-23
 
 ### Changed

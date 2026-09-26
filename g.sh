@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Auto Script for GitHub Setup and Push - lightweight project launcher.
-# Managed git-auto project launcher. Copy this file into any project folder.
+# Managed git-auto project launcher. Place this file in a project's root folder.
+# Auto Script for GitHub Setup and Push: commit and push this folder to GitHub.
+# ./g.sh: review, confirm, commit, push. ./g.sh new: set up account and SSH.
+# ./g.sh update: sync GitHub renames. ./g.sh menu: settings and advanced tools.
+# Central git-auto.sh does the work; no account data or push logic lives here.
 
 set -u
 
 # Ignore inherited settings that could redirect this launcher or its commits.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 
-# Keep launcher-level Git lookups noninteractive. The central engine repeats
-# this guard for every Git command after dispatch.
 GIT_PAGER=cat
 export GIT_PAGER
 

@@ -56,20 +56,21 @@ check_before_git_init() {
 locate_project() {
   local initialize="${1:-yes}"
   local existing_root=""
+  local enclosing_root=""
 
   if existing_root="$(git -C "$SCRIPT_DIRECTORY" rev-parse --show-toplevel 2>/dev/null)"; then
     existing_root="$({ cd "$existing_root" 2>/dev/null && pwd -P; } || return 1)"
     # macOS can spell the same directory with different case or an equivalent
     # physical prefix (for example /var and /private/var). Compare the actual
     # directory objects instead of their displayed path strings.
-    if [ ! "$existing_root" -ef "$SCRIPT_DIRECTORY" ]; then
-      fail \
-        "$SCRIPT_NAME is in $(human_path "$SCRIPT_DIRECTORY"), but the Git repository root is $(human_path "$existing_root"). Place $SCRIPT_NAME in that repository root before running it." \
-        "$SCRIPT_NAME 位于 $(human_path "$SCRIPT_DIRECTORY")，但这个 Git 仓库的根目录是 $(human_path "$existing_root")。请把 $SCRIPT_NAME 放到该仓库根目录后再运行。"
+    if [ "$existing_root" -ef "$SCRIPT_DIRECTORY" ]; then
+      GIT_ROOT="$existing_root"
+      PROJECT_GIT_STATE="existing"
+      return 0
     fi
-    GIT_ROOT="$existing_root"
-    PROJECT_GIT_STATE="existing"
-    return 0
+    # Git discovered an ancestor's repository. The launcher's own folder is
+    # still a separate project and may be initialized as a nested repository.
+    enclosing_root="$existing_root"
   fi
 
   if [ "$initialize" != "yes" ]; then
@@ -78,9 +79,15 @@ locate_project() {
   check_before_git_init "$SCRIPT_DIRECTORY" || return 1
 
   heading "Prepare the local Git repository" "准备本地 Git 仓库"
-  warn \
-    "No Git repository exists at $(human_path "$SCRIPT_DIRECTORY")." \
-    "$(human_path "$SCRIPT_DIRECTORY") 还不是 Git 仓库。"
+  if [ -n "$enclosing_root" ]; then
+    warn \
+      "This folder is inside the Git repository at $(human_path "$enclosing_root"), but has no Git repository of its own." \
+      "这个文件夹位于 $(human_path "$enclosing_root") 的 Git 仓库内，但还没有自己的 Git 仓库。"
+  else
+    warn \
+      "No Git repository exists at $(human_path "$SCRIPT_DIRECTORY")." \
+      "$(human_path "$SCRIPT_DIRECTORY") 还不是 Git 仓库。"
+  fi
   muted \
     "The script will run git init in this folder. This creates local .git metadata only; it does not create a GitHub repository or upload files." \
     "接下来只会在这个文件夹中执行 git init，创建本地 .git 记录；此时不会创建 GitHub 仓库，也不会上传文件。"

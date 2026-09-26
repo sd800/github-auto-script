@@ -105,6 +105,8 @@ Running `./git-auto.sh new` from the central folder goes directly to account set
 
 The public `g.sh` contains no GitHub account, SSH, version, commit, or history-building logic. It treats its own folder as the project root and uses the central engine path saved in that repository's local Git configuration. The central repository's own `g.sh` can use the `git-auto.sh` beside it. If neither exact path exists, the launcher asks for either the `git-auto.sh` file or its containing folder instead of searching unrelated directories.
 
+A project folder may sit inside another Git repository. If it has no `.git` of its own, normal setup initializes an independent nested repository in that folder; it never binds the launcher to the enclosing repository. Read-only checks do not initialize the child repository.
+
 `g.sh` is a permanent seed launcher. Once this version has been copied into a project, routine releases do not replace it: features, interface text, and safety behavior all come from the central `git-auto.sh` and `src/` files. Updating the central project therefore updates every linked project at once. Its protocol marker also lets future central engines preserve compatibility with this seed.
 
 The root `g.sh` is tracked and is never placed in this repository's ignore rules. When the central menu copies it into another project, only that project copy is added to `.git/info/exclude`; the project's shared `.gitignore` is not changed. After a project is configured successfully, the resolved central path is remembered in that project's local `.git/config`. The launcher itself remains generic and contains no personal path.

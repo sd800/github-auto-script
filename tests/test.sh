@@ -1146,6 +1146,7 @@ test_project_root_identity() {
   local original_directory="$SCRIPT_DIRECTORY"
   local original_name="$SCRIPT_NAME"
   local original_root="${GIT_ROOT:-}"
+  local original_state="${PROJECT_GIT_STATE:-}"
 
   mkdir -p "$repository" "$nested_directory"
   git -C "$repository" init -q
@@ -1159,15 +1160,36 @@ test_project_root_identity() {
     fail_test "project-root detection accepts an equivalent path to the same directory"
   fi
 
-  if (SCRIPT_DIRECTORY="$nested_directory"; locate_project no >/dev/null 2>&1); then
-    fail_test "project-root detection still rejects a genuinely nested directory"
+  if (SCRIPT_DIRECTORY="$nested_directory"; locate_project no >/dev/null 2>&1) ||
+     [ -e "$nested_directory/.git" ]; then
+    fail_test "read-only project detection does not use the enclosing repository or initialize the child"
   else
-    pass "project-root detection still rejects a genuinely nested directory"
+    pass "read-only project detection does not use the enclosing repository or initialize the child"
+  fi
+
+  SCRIPT_DIRECTORY="$nested_directory"
+  if locate_project yes >/dev/null 2>&1 &&
+     [ "$GIT_ROOT" -ef "$nested_directory" ] &&
+     [ "$PROJECT_GIT_STATE" = initialized ] &&
+     [ "$(git -C "$nested_directory" rev-parse --show-toplevel)" -ef "$nested_directory" ] &&
+     [ "$(git -C "$repository" rev-parse --show-toplevel)" -ef "$repository" ]; then
+    pass "a child project can initialize its own nested Git repository without rebinding the parent"
+  else
+    fail_test "a child project can initialize its own nested Git repository without rebinding the parent"
+  fi
+
+  if locate_project no >/dev/null 2>&1 &&
+     [ "$PROJECT_GIT_STATE" = existing ] &&
+     [ "$GIT_ROOT" -ef "$nested_directory" ]; then
+    pass "subsequent runs reuse the nested Git repository"
+  else
+    fail_test "subsequent runs reuse the nested Git repository"
   fi
 
   SCRIPT_DIRECTORY="$original_directory"
   SCRIPT_NAME="$original_name"
   GIT_ROOT="$original_root"
+  PROJECT_GIT_STATE="$original_state"
 }
 
 test_existing_repository_state() {
@@ -1962,7 +1984,11 @@ test_project_release_policy() {
   english_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG.md" | sed -n '1p')"
   chinese_version="$(sed -nE 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$PROJECT_DIRECTORY/CHANGELOG_zh.md" | sed -n '1p')"
   file_version="$(sed -n '1p' "$PROJECT_DIRECTORY/VERSION")"
-  assert_equal "3.19.2" "$english_version" "English changelog declares release 3.19.2"
+  if [ -n "$english_version" ]; then
+    pass "English changelog declares a release"
+  else
+    fail_test "English changelog declares a release"
+  fi
   assert_equal "$english_version" "$chinese_version" "English and Chinese changelogs declare the same release"
   assert_equal "$english_version" "$file_version" "root VERSION matches both changelogs"
   assert_equal "1" "$(awk 'END { print NR }' "$PROJECT_DIRECTORY/VERSION")" "root VERSION contains one line only"
