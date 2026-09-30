@@ -19,6 +19,9 @@ BOUND_IDENTITY_FILE=""
 PROJECT_BINDING_REUSED=false
 PROJECT_BINDING_ENGINE_STALE=false
 WORKFLOW_COMMIT_CREATED_THIS_RUN=false
+WORKFLOW_CREATED_COMMIT_HEAD=""
+WORKFLOW_CREATED_COMMIT_BRANCH=""
+WORKFLOW_PUSH_REJECTION_CONFIRMED=false
 
 require_core_commands() {
   local missing=""
@@ -1244,6 +1247,8 @@ prepare_and_commit() {
   local commit_options=()
 
   WORKFLOW_COMMIT_CREATED_THIS_RUN=false
+  WORKFLOW_CREATED_COMMIT_HEAD=""
+  WORKFLOW_CREATED_COMMIT_BRANCH=""
 
   info \
     "Checking the working tree for changes to commit..." \
@@ -1515,6 +1520,8 @@ prepare_and_commit() {
     return 1
   fi
   WORKFLOW_COMMIT_CREATED_THIS_RUN=true
+  WORKFLOW_CREATED_COMMIT_HEAD="$WORKFLOW_EXPECTED_HEAD"
+  WORKFLOW_CREATED_COMMIT_BRANCH="$WORKFLOW_EXPECTED_SYMBOLIC_HEAD"
   clear_workflow_state
 }
 
@@ -1531,6 +1538,7 @@ push_current_branch() {
   local tee_status=0
   local pipeline_status=()
 
+  WORKFLOW_PUSH_REJECTION_CONFIRMED=false
   require_repository_account_match || return 1
   if [ "$WORKFLOW_TRANSACTION_ACTIVE" = true ] &&
      ! verify_workflow_checkpoint "uploading" "上传"; then
@@ -1626,6 +1634,9 @@ push_current_branch() {
     return 1
   fi
   if [ "$push_status" -ne 0 ]; then
+    if push_definitively_rejected "$output"; then
+      WORKFLOW_PUSH_REJECTION_CONFIRMED=true
+    fi
     explain_push_failure "$output" "$branch"
     if [ "$allow_history_append" = yes ] && push_rejection_is_remote_ahead "$output"; then
       append_current_version_to_remote_history "$branch" "$push_head"
@@ -1654,6 +1665,62 @@ push_rejection_is_remote_ahead() {
       ;;
   esac
   return 1
+}
+
+push_definitively_rejected() {
+  local output="$1"
+
+  case "$output" in
+    *'[remote rejected]'*|*'[rejected]'*|*'pre-receive hook declined'*|*'GH001:'*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+undo_rejected_push_commit() {
+  local current_root=""
+  local current_head=""
+  local current_branch=""
+  local parent_line=""
+  local commit_tree=""
+  local staged_tree=""
+  local pointing_refs=""
+  local commit_parts=()
+
+  [ "$WORKFLOW_COMMIT_CREATED_THIS_RUN" = true ] &&
+    [ "$WORKFLOW_PUSH_REJECTION_CONFIRMED" = true ] &&
+    [ -n "$WORKFLOW_CREATED_COMMIT_HEAD" ] &&
+    [ -z "$WORKFLOW_PUSH_REFERENCE" ] || return 1
+  current_root="$(git -C "$GIT_ROOT" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  current_head="$(git -C "$GIT_ROOT" rev-parse --verify HEAD 2>/dev/null)" || return 1
+  current_branch="$(git -C "$GIT_ROOT" symbolic-ref -q HEAD 2>/dev/null)" || return 1
+  [ "$current_root" -ef "$GIT_ROOT" ] &&
+    [ "$current_head" = "$WORKFLOW_CREATED_COMMIT_HEAD" ] &&
+    [ "$current_branch" = "$WORKFLOW_CREATED_COMMIT_BRANCH" ] || return 1
+  git_operation_in_progress && return 1
+  parent_line="$(git -C "$GIT_ROOT" rev-list --parents -n 1 "$current_head" 2>/dev/null)" || return 1
+  read -r -a commit_parts <<< "$parent_line"
+  [ "${commit_parts[0]:-}" = "$current_head" ] &&
+    [ "${#commit_parts[@]}" -le 2 ] || return 1
+  pointing_refs="$(git -C "$GIT_ROOT" for-each-ref --points-at "$current_head" --format='%(refname)' 2>/dev/null)" || return 1
+  [ "$pointing_refs" = "$current_branch" ] || return 1
+  commit_tree="$(git -C "$GIT_ROOT" show -s --format='%T' "$current_head" 2>/dev/null)" || return 1
+  staged_tree="$(git -C "$GIT_ROOT" write-tree 2>/dev/null)" || return 1
+  [ "$staged_tree" = "$commit_tree" ] || return 1
+
+  if [ "${#commit_parts[@]}" -eq 2 ]; then
+    git -C "$GIT_ROOT" update-ref -m 'git-auto: undo rejected push commit' \
+      "$current_branch" "${commit_parts[1]}" "$current_head" || return 1
+  else
+    git -C "$GIT_ROOT" update-ref -d "$current_branch" "$current_head" || return 1
+  fi
+  WORKFLOW_COMMIT_CREATED_THIS_RUN=false
+  WORKFLOW_CREATED_COMMIT_HEAD=""
+  WORKFLOW_CREATED_COMMIT_BRANCH=""
+  success \
+    "GitHub rejected this run's new commit. It was removed from the current branch; all file changes remain staged so you can fix the problem and commit again." \
+    "GitHub 已拒绝本次新建的提交。该提交已从当前分支撤回；文件改动仍保留在暂存区，修正问题后可以重新提交。"
 }
 
 clear_remote_history_reference() {
@@ -1703,8 +1770,8 @@ append_current_version_to_remote_history() {
     "要保留远端历史，并把当前本机版本追加为最新版本吗？" \
     "no"; then
     warn \
-      "This option was not used. The local commit and remote history remain unchanged." \
-      "没有执行这项操作；本机提交和远端历史均保持不变。"
+      "This option was not used. The remote history remains unchanged." \
+      "没有执行这项操作；远端历史保持不变。"
     return 2
   fi
 
@@ -1737,8 +1804,8 @@ append_current_version_to_remote_history() {
     clear_remote_history_reference
     clear_workflow_state
     error_message \
-      "The latest remote history could not be read. The local branch and remote repository remain unchanged." \
-      "无法读取远端最新历史；本机分支和远端仓库均保持不变。"
+      "The latest remote history could not be read. No connecting commit was made, and the remote repository remains unchanged." \
+      "无法读取远端最新历史；没有创建衔接提交，远端仓库保持不变。"
     return 1
   fi
   remote_head="$(git -C "$GIT_ROOT" rev-parse --verify "$remote_reference" 2>/dev/null || true)"
@@ -1746,8 +1813,8 @@ append_current_version_to_remote_history() {
     clear_remote_history_reference
     clear_workflow_state
     error_message \
-      "Git did not return a valid latest commit for the remote branch. The local branch was not changed." \
-      "Git 没有返回有效的远端分支最新提交；本机分支没有改动。"
+      "Git did not return a valid latest commit for the remote branch. No connecting commit was made." \
+      "Git 没有返回有效的远端分支最新提交；没有创建衔接提交。"
     return 1
   fi
   if [ "$WORKFLOW_TRANSACTION_ACTIVE" = true ] &&
@@ -1788,8 +1855,8 @@ append_current_version_to_remote_history() {
     clear_remote_history_reference
     clear_workflow_state
     warn \
-      "History connection canceled before the local branch changed. The local commit and remote history remain unchanged." \
-      "已在改动本机分支前取消历史衔接；本机提交和远端历史均保持不变。"
+      "History connection canceled. No connecting commit was made, and the remote history remains unchanged." \
+      "已取消历史衔接；没有创建衔接提交，远端历史保持不变。"
     return 2
   elif [ "$commit_status" -ne 0 ]; then
     clear_remote_history_reference
@@ -1876,8 +1943,8 @@ explain_push_failure() {
 
   normalized="$(lowercase "$output")"
   error_message \
-    "The push did not complete. No force push was used, no remote history was overwritten, and any new commit remains safely in this local repository." \
-    "本次上传没有完成。脚本没有强制推送，也没有覆盖远端历史；刚刚创建的提交仍安全保留在当前本地仓库中。"
+    "The push did not complete. No force push was used, and no remote history was overwritten." \
+    "本次上传没有完成。脚本没有强制推送，也没有覆盖远端历史。"
   case "$normalized" in
     *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do\ not*)
       muted \
@@ -1891,13 +1958,13 @@ explain_push_failure() {
       ;;
     *could\ not\ resolve\ hostname*|*connection\ timed\ out*|*connection\ reset*|*network\ is\ unreachable*|*remote\ end\ hung\ up*)
       muted \
-        "The connection to GitHub was interrupted or unavailable. Check the network and run ./$SCRIPT_NAME again; the existing local commit will be reused rather than recreated." \
-        "本次连接 GitHub 时网络不可用或连接中断。请检查网络后重新运行 ./${SCRIPT_NAME}；现有本地提交会直接继续使用，不会重复创建。"
+        "The connection to GitHub was interrupted or unavailable. Its final result is uncertain, so the local commit will be kept. Check the network and run ./$SCRIPT_NAME again; it will not be duplicated." \
+        "本次连接 GitHub 时网络不可用或连接中断，无法确定远端最终结果，因此会保留本地提交。请检查网络后重新运行 ./${SCRIPT_NAME}；脚本不会重复创建提交。"
       ;;
     *)
       muted \
-        "The Git output above contains the exact failure reported by the remote. Correct that condition and run ./$SCRIPT_NAME again; the script will not duplicate the local commit." \
-        "上方 Git 返回信息包含远端报告的具体原因。处理后重新运行 ./${SCRIPT_NAME} 即可；脚本不会重复创建本地提交。"
+        "The Git output above contains the reported failure. Correct that condition and run ./$SCRIPT_NAME again. Any local commit kept after this run will not be duplicated." \
+        "上方 Git 输出包含本次失败的具体原因。处理后重新运行 ./${SCRIPT_NAME} 即可；如果本地提交得到保留，脚本不会重复创建。"
       ;;
   esac
 }
@@ -1932,6 +1999,14 @@ run_project_flow() (
     return 1
   fi
   push_current_branch "$WORKFLOW_COMMIT_CREATED_THIS_RUN" || push_status=$?
+  if [ "$push_status" -ne 0 ] && [ "$WORKFLOW_COMMIT_CREATED_THIS_RUN" = true ] &&
+     [ "$WORKFLOW_PUSH_REJECTION_CONFIRMED" = true ]; then
+    if ! undo_rejected_push_commit; then
+      warn \
+        "The new local commit was kept because its branch, staging area, history, or other references no longer allow a safe automatic undo." \
+        "由于当前分支、暂存区、提交历史或其他引用已不满足安全撤回条件，新的本地提交予以保留。"
+    fi
+  fi
   if [ "$push_status" -eq 2 ]; then
     return 0
   fi

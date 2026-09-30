@@ -2892,7 +2892,7 @@ test_focused_ssh_and_launcher() {
   if [ "$status" -ne 0 ] &&
      grep -Fq 'GitHub has commits on main' "$push_marker" &&
      grep -Fq 'Keep the remote history and append this local version? [y/N]:' "$push_marker" &&
-     grep -Fq 'The local commit and remote history remain unchanged.' "$push_marker"; then
+     grep -Fq 'The remote history remains unchanged.' "$push_marker"; then
     pass "live push progress preserves Git's failure status and detailed explanation"
   else
     fail_test "live push progress preserves Git's failure status and detailed explanation"

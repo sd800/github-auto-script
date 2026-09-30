@@ -316,6 +316,65 @@ remote_history_append_message_can_be_canceled() {
 remote_hook_rejection_does_not_offer_history_append() {
   ! push_rejection_is_remote_ahead 'Updates were rejected by a pre-receive hook'
 }
+rejected_push_restores_staged_snapshot() {
+  push_fixture rejected-commit || return 1
+  local PATH="$AUDIT_TMP/transport:$PATH" AUDIT_SSH_LOG="$AUDIT_TMP/rejected-commit-log"
+  local BOUND_IDENTITY_FILE="$AUDIT_TMP/rejected-commit-key"
+  local WORKFLOW_TRANSACTION_ACTIVE=false WORKFLOW_COMMIT_CREATED_THIS_RUN=true
+  local WORKFLOW_CREATED_COMMIT_HEAD="" WORKFLOW_CREATED_COMMIT_BRANCH=refs/heads/main
+  local WORKFLOW_PUSH_REJECTION_CONFIRMED=false WORKFLOW_PUSH_REFERENCE=""
+  local before="$(git -C "$GIT_ROOT" rev-parse HEAD)" result=0
+  export PATH AUDIT_SSH_LOG
+  printf '#!/bin/sh\nprintf "rejected for test\\n" >&2\nexit 1\n' > "$AUDIT_REMOTE/hooks/pre-receive"
+  chmod +x "$AUDIT_REMOTE/hooks/pre-receive"
+  : > "$BOUND_IDENTITY_FILE"
+  printf 'new content\n' >> "$GIT_ROOT/base.txt"
+  git -C "$GIT_ROOT" add -A && git -C "$GIT_ROOT" commit -qm 'Rejected release' || return 1
+  WORKFLOW_CREATED_COMMIT_HEAD="$(git -C "$GIT_ROOT" rev-parse HEAD)"
+  push_current_branch true no > "$AUDIT_TMP/rejected-commit-output" 2>&1 || result=$?
+  [ "$result" -eq 1 ] &&
+    [ "$WORKFLOW_PUSH_REJECTION_CONFIRMED" = true ] &&
+    undo_rejected_push_commit >> "$AUDIT_TMP/rejected-commit-output" 2>&1 &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$before" ] &&
+    [ "$(git -C "$GIT_ROOT" diff --cached --name-only)" = base.txt ] &&
+    git -C "$GIT_ROOT" diff --quiet &&
+    [ -z "$(git --git-dir="$AUDIT_REMOTE" for-each-ref --format='%(refname)')" ]
+}
+uncertain_push_does_not_undo_commit() {
+  fixture uncertain-commit && baseline || return 1
+  local before="$(git -C "$GIT_ROOT" rev-parse HEAD)"
+  local WORKFLOW_COMMIT_CREATED_THIS_RUN=true WORKFLOW_CREATED_COMMIT_HEAD="$before"
+  local WORKFLOW_CREATED_COMMIT_BRANCH=refs/heads/main WORKFLOW_PUSH_REJECTION_CONFIRMED=false
+  ! push_definitively_rejected 'ssh: connection reset by peer' &&
+    ! undo_rejected_push_commit &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$before" ]
+}
+rejected_initial_commit_returns_to_unborn_branch() {
+  fixture rejected-initial || return 1
+  local WORKFLOW_COMMIT_CREATED_THIS_RUN=true WORKFLOW_CREATED_COMMIT_HEAD=""
+  local WORKFLOW_CREATED_COMMIT_BRANCH=refs/heads/main WORKFLOW_PUSH_REJECTION_CONFIRMED=true
+  local WORKFLOW_PUSH_REFERENCE=""
+  printf 'initial files\n' > "$GIT_ROOT/file.txt"
+  git -C "$GIT_ROOT" add -A && git -C "$GIT_ROOT" commit -qm 'Initial release' || return 1
+  WORKFLOW_CREATED_COMMIT_HEAD="$(git -C "$GIT_ROOT" rev-parse HEAD)"
+  undo_rejected_push_commit > "$AUDIT_TMP/rejected-initial-output" 2>&1 &&
+    ! git -C "$GIT_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 &&
+    [ "$(git -C "$GIT_ROOT" diff --cached --name-only)" = file.txt ] &&
+    [ -f "$GIT_ROOT/file.txt" ]
+}
+tagged_rejected_commit_is_not_undone() {
+  fixture tagged-rejected && baseline || return 1
+  local WORKFLOW_COMMIT_CREATED_THIS_RUN=true WORKFLOW_CREATED_COMMIT_HEAD=""
+  local WORKFLOW_CREATED_COMMIT_BRANCH=refs/heads/main WORKFLOW_PUSH_REJECTION_CONFIRMED=true
+  local WORKFLOW_PUSH_REFERENCE=""
+  printf 'changed\n' >> "$GIT_ROOT/base.txt"
+  git -C "$GIT_ROOT" add -A && git -C "$GIT_ROOT" commit -qm 'Tagged release' || return 1
+  WORKFLOW_CREATED_COMMIT_HEAD="$(git -C "$GIT_ROOT" rev-parse HEAD)"
+  git -C "$GIT_ROOT" tag kept-tag || return 1
+  ! undo_rejected_push_commit >/dev/null 2>&1 &&
+    [ "$(git -C "$GIT_ROOT" rev-parse HEAD)" = "$WORKFLOW_CREATED_COMMIT_HEAD" ] &&
+    [ "$(git -C "$GIT_ROOT" rev-parse kept-tag)" = "$WORKFLOW_CREATED_COMMIT_HEAD" ]
+}
 localized_default_letter_is_uppercase() {
   local UI_LANGUAGE=zh ADVANCED_LANGUAGE=zh result=0
   prompt_yes_no '确认默认是' yes > "$AUDIT_TMP/prompt-yes" 2>&1 <<< '' || return 1
@@ -348,6 +407,10 @@ check remote_history_append_defaults_to_no
 check remote_history_is_retained_before_local_snapshot
 check remote_history_append_message_can_be_canceled
 check remote_hook_rejection_does_not_offer_history_append
+check rejected_push_restores_staged_snapshot
+check uncertain_push_does_not_undo_commit
+check rejected_initial_commit_returns_to_unborn_branch
+check tagged_rejected_commit_is_not_undone
 check localized_default_letter_is_uppercase
 printf '%s checks; %s failures\n' "$AUDIT_COUNT" "$AUDIT_FAILURES"
 [ "$AUDIT_FAILURES" -eq 0 ]

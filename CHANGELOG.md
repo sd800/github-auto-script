@@ -6,6 +6,16 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.19.5 - 2026-09-29
+
+### Changed
+
+- After Git explicitly rejects a push, remove the commit created by that run from the current branch while keeping its file changes staged. Preserve older commits and any commit whose remote outcome or local state is uncertain.
+
+### Tests
+
+- Covered a rejected push, an initial commit, an uncertain connection, and a commit also referenced by a tag.
+
 ## 3.19.3 - 2026-09-25
 
 ### Changed
