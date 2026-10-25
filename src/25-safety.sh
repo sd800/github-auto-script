@@ -188,7 +188,7 @@ acquire_workflow_lock() {
   WORKFLOW_STATE_FILE="$WORKFLOW_COMMON_DIRECTORY/github-auto.workflow-state"
   WORKFLOW_LOCK_TOKEN="$$-${RANDOM:-1}-${RANDOM:-1}"
 
-  if ! mkdir "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
+  if ! mkdir -m 700 "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
     if owner_pids="$(workflow_lock_owner_pids "$WORKFLOW_LOCK_DIRECTORY")"; then
       owners_known=true
       while IFS= read -r owner_pid; do
@@ -201,7 +201,7 @@ acquire_workflow_lock() {
     fi
     if [ "$owners_known" = true ] && [ -z "$active_pid" ]; then
       if ! remove_stale_workflow_lock "$WORKFLOW_LOCK_DIRECTORY" ||
-         ! mkdir "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
+         ! mkdir -m 700 "$WORKFLOW_LOCK_DIRECTORY" 2>/dev/null; then
         error_message \
           "A stale workflow lock exists but could not be removed safely: $WORKFLOW_LOCK_DIRECTORY" \
           "发现上次遗留的流程锁，但无法安全移除：${WORKFLOW_LOCK_DIRECTORY}"

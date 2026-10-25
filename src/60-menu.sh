@@ -6,7 +6,9 @@ launcher_is_managed() {
   local launcher_file="$1"
 
   [ -f "$launcher_file" ] &&
-    grep -Fq '# Managed git-auto project launcher' "$launcher_file" 2>/dev/null
+    [ ! -L "$launcher_file" ] &&
+    sed -n '1,8p' "$launcher_file" | grep -Eq '^# Managed git-auto project launcher\.' &&
+    grep -Fxq 'exec bash "$ENGINE_PATH" "$@"' "$launcher_file" 2>/dev/null
 }
 
 shell_single_quoted_value() {
@@ -122,10 +124,11 @@ create_or_repair_project_launcher() {
   fi
 
   launcher_file="$project_directory/g.sh"
-  if [ -e "$launcher_file" ] && ! launcher_is_managed "$launcher_file"; then
+  if { [ -e "$launcher_file" ] || [ -L "$launcher_file" ]; } &&
+     ! launcher_is_managed "$launcher_file"; then
     warn \
-      "This project already contains a g.sh file that was not created by git-auto." \
-      "这个项目中已经存在一个并非由 git-auto 创建的 g.sh。"
+      "This project already has a g.sh that cannot be confirmed as a regular git-auto launcher." \
+      "这个项目已有 g.sh，但无法确认它是普通的 git-auto 启动器文件。"
     if ! ui_prompt_yes_no \
       "Replace it with the lightweight launcher?" \
       "要用新的轻量级启动器替换它吗？" \

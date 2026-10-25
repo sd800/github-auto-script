@@ -286,6 +286,8 @@ The engine writes only to locations required by the requested workflow:
 
 The script does not use any other application-specific configuration directory. It creates or edits `~/.ssh` only when SSH identity work is explicitly part of the selected flow, and it shows the exact new key and Host before creation. Private keys are never copied into the central project or `private/config.txt`. Inherited Git environment values cannot redirect the launcher or engine to another repository, index, object store, or commit identity. Ordinary commands perform no optional online precheck, ordinary pushes never use force, and source release folders are never changed by historical import.
 
+The private directory and its `config.txt` must themselves be an ordinary folder and file; the script stops rather than following a link at either location. Existing valid links to `~/.ssh/config` remain supported, but broken links stop SSH setup. An existing project `g.sh` that cannot be identified as this tool's launcher is replaced only after confirmation. Historical cleanup is confined to the temporary workspaces created for that import, and an uncertain push result never triggers automatic commit removal.
+
 ## Requirements and testing
 
 - Bash 3.2 or later.

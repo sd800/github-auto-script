@@ -6,6 +6,18 @@
 
 All notable changes to Auto Script for GitHub Setup and Push are documented in this file.
 
+## 3.21.1 - 2026-10-25
+
+### Security
+
+- Refuse symbolic links and non-file replacements at private configuration paths before changing permissions or writing account data. Reject broken SSH configuration links and reserve dangling key-name links instead of reusing their names.
+- Create repository workflow locks with owner-only permissions. Require an actual Git rejection status line before automatically undoing a newly created, rejected commit.
+- Require stronger evidence before treating an existing `g.sh` as a managed launcher; ask before replacing a linked or unrecognized one. Limit historical snapshot cleanup and replacement to the exact temporary workspace shape created by the tool.
+
+### Tests
+
+- Added isolated regression cases for linked configuration paths, key-name collisions, lock permissions, forged rejection text, launcher identification, and historical cleanup boundaries.
+
 ## 3.19.5 - 2026-09-29
 
 ### Changed

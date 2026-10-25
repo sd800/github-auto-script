@@ -1168,6 +1168,7 @@ history_safe_temporary_path() {
   local path="$1"
   local kind="$2"
   local base="${TMPDIR:-/tmp}"
+  local suffix=""
 
   base="${base%/}"
   [ -n "$path" ] || return 1
@@ -1175,7 +1176,10 @@ history_safe_temporary_path() {
   [ "$path" != "${HOME:-}" ] || return 1
   case "$path" in
     "$base/github-auto-${kind}."*)
-      return 0
+      suffix="${path#"$base/github-auto-${kind}."}"
+      [[ "$suffix" =~ ^[A-Za-z0-9]{6}$ ]] &&
+        [ -d "$path" ] && [ ! -L "$path" ]
+      return $?
       ;;
   esac
   return 1
@@ -1222,7 +1226,9 @@ history_replace_worktree_snapshot() {
   local source_directory="$2"
   local entry=""
 
-  [ -f "$work_directory/.git/github-auto-history-workspace" ] || return 1
+  [ "$work_directory" = "$HISTORY_WORK_DIRECTORY" ] &&
+    history_safe_temporary_path "$work_directory" history &&
+    [ -f "$work_directory/.git/github-auto-history-workspace" ] || return 1
   history_prepare_snapshot_copy "$source_directory" || return 1
 
   while IFS= read -r -d '' entry; do
@@ -1478,14 +1484,15 @@ history_link_working_directory() (
     return 1
   fi
 
-  if [ -e "$launcher_file" ] && ! launcher_is_managed "$launcher_file"; then
+  if { [ -e "$launcher_file" ] || [ -L "$launcher_file" ]; } &&
+     ! launcher_is_managed "$launcher_file"; then
     advanced_muted \
-      "The existing g.sh was not created by git-auto and must be replaced before this project can use the central workflow." \
-      "当前 g.sh 不是由 git-auto 创建的；需要替换后，这个项目才能使用中央流程。"
+      "The existing g.sh cannot be confirmed as a regular git-auto launcher. Replacing it is required before this project can use the central workflow." \
+      "无法确认现有 g.sh 是普通的 git-auto 启动器文件；要在此项目使用中央流程，需要先替换它。"
     if ! advanced_prompt_yes_no \
       "Replace the existing g.sh with the lightweight launcher?" \
       "要用轻量启动器替换现有 g.sh 吗？" \
-      "yes"; then
+      "no"; then
       return 1
     fi
   fi

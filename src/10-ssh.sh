@@ -685,7 +685,9 @@ next_available_alias() {
     key_path="$SSH_DIRECTORY/id_ed25519_$candidate"
     if ! ssh_alias_exists "$candidate" &&
        [ ! -e "$key_path" ] &&
-       [ ! -e "${key_path}.pub" ]; then
+       [ ! -L "$key_path" ] &&
+       [ ! -e "${key_path}.pub" ] &&
+       [ ! -L "${key_path}.pub" ]; then
       NEW_SSH_ALIAS="$candidate"
       NEW_IDENTITY_FILE="$key_path"
       return 0
@@ -698,6 +700,11 @@ next_available_alias() {
 ensure_ssh_storage() {
   ensure_home_available
 
+  if [ -L "$SSH_DIRECTORY" ] && [ ! -d "$SSH_DIRECTORY" ]; then
+    fail \
+      "The SSH directory is a broken symbolic link: $(human_path "$SSH_DIRECTORY")." \
+      "SSH 文件夹是失效的符号链接：$(human_path "$SSH_DIRECTORY")。"
+  fi
   if [ ! -d "$SSH_DIRECTORY" ]; then
     mkdir -p "$SSH_DIRECTORY" || fail \
       "Could not create $(human_path "$SSH_DIRECTORY")." \
@@ -707,6 +714,16 @@ ensure_ssh_storage() {
     "Could not secure the SSH directory permissions." \
     "无法设置 SSH 目录的安全权限。"
 
+  if [ -L "$SSH_CONFIG_FILE" ] && [ ! -f "$SSH_CONFIG_FILE" ]; then
+    fail \
+      "The SSH configuration file is a broken symbolic link: $(human_path "$SSH_CONFIG_FILE")." \
+      "SSH 配置文件是失效的符号链接：$(human_path "$SSH_CONFIG_FILE")。"
+  fi
+  if [ -e "$SSH_CONFIG_FILE" ] && [ ! -f "$SSH_CONFIG_FILE" ]; then
+    fail \
+      "The SSH configuration path is not a regular file: $(human_path "$SSH_CONFIG_FILE")." \
+      "SSH 配置路径不是普通文件：$(human_path "$SSH_CONFIG_FILE")。"
+  fi
   if [ ! -f "$SSH_CONFIG_FILE" ]; then
     : > "$SSH_CONFIG_FILE" || fail \
       "Could not create the SSH configuration file." \

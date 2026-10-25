@@ -52,8 +52,23 @@ safe_mktemp_directory() {
 ensure_private_config() {
   local temporary_file=""
 
+  if [ -L "$PRIVATE_DIRECTORY" ] ||
+     { [ -e "$PRIVATE_DIRECTORY" ] && [ ! -d "$PRIVATE_DIRECTORY" ]; }; then
+    printf '%s\n' \
+      "[Error] The private configuration directory is a symbolic link or is not a directory: $PRIVATE_DIRECTORY" \
+      "[错误] 私人配置目录是符号链接，或不是文件夹：$PRIVATE_DIRECTORY" >&2
+    return 1
+  fi
   if ! mkdir -p "$PRIVATE_DIRECTORY" || ! chmod 700 "$PRIVATE_DIRECTORY"; then
     printf '%s\n' "[Error] Could not prepare the private configuration directory: $PRIVATE_DIRECTORY" >&2
+    return 1
+  fi
+
+  if [ -L "$PRIVATE_CONFIG_FILE" ] ||
+     { [ -e "$PRIVATE_CONFIG_FILE" ] && [ ! -f "$PRIVATE_CONFIG_FILE" ]; }; then
+    printf '%s\n' \
+      "[Error] The private configuration file is a symbolic link or is not a regular file: $PRIVATE_CONFIG_FILE" \
+      "[错误] 私人配置文件是符号链接，或不是普通文件：$PRIVATE_CONFIG_FILE" >&2
     return 1
   fi
 

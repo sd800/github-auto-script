@@ -1669,12 +1669,13 @@ push_rejection_is_remote_ahead() {
 
 push_definitively_rejected() {
   local output="$1"
+  local line=""
 
-  case "$output" in
-    *'[remote rejected]'*|*'[rejected]'*|*'pre-receive hook declined'*|*'GH001:'*)
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*![[:space:]]+\[(remote[[:space:]]+rejected|rejected)\] ]]; then
       return 0
-      ;;
-  esac
+    fi
+  done <<< "$output"
   return 1
 }
 

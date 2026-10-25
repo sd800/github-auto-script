@@ -316,6 +316,98 @@ remote_history_append_message_can_be_canceled() {
 remote_hook_rejection_does_not_offer_history_append() {
   ! push_rejection_is_remote_ahead 'Updates were rejected by a pre-receive hook'
 }
+private_directory_symlink_is_not_followed() {
+  local PRIVATE_DIRECTORY="$AUDIT_TMP/private-link"
+  local PRIVATE_CONFIG_FILE="$PRIVATE_DIRECTORY/config.txt"
+  local target="$AUDIT_TMP/private-link-target"
+  mkdir -p "$target" || return 1
+  chmod 755 "$target" || return 1
+  ln -s "$target" "$PRIVATE_DIRECTORY" || return 1
+  ! ensure_private_config > "$AUDIT_TMP/private-link-output" 2>&1 &&
+    [ "$(file_mode "$target")" = 755 ] &&
+    [ ! -e "$target/config.txt" ]
+}
+private_config_symlink_is_not_followed() {
+  local PRIVATE_DIRECTORY="$AUDIT_TMP/private-file-link"
+  local PRIVATE_CONFIG_FILE="$PRIVATE_DIRECTORY/config.txt"
+  local target="$AUDIT_TMP/unrelated-file"
+  mkdir -p "$PRIVATE_DIRECTORY" || return 1
+  printf 'keep this file\n' > "$target"
+  chmod 644 "$target" || return 1
+  ln -s "$target" "$PRIVATE_CONFIG_FILE" || return 1
+  ! ensure_private_config > "$AUDIT_TMP/private-file-link-output" 2>&1 &&
+    [ "$(file_mode "$target")" = 644 ] &&
+    [ "$(sed -n '1p' "$target")" = 'keep this file' ]
+}
+dangling_ssh_config_symlink_is_not_created() {
+  local SSH_DIRECTORY="$AUDIT_TMP/ssh-dangling"
+  local SSH_CONFIG_FILE="$SSH_DIRECTORY/config"
+  local target="$AUDIT_TMP/not-an-ssh-config"
+  mkdir -p "$SSH_DIRECTORY" || return 1
+  ln -s "$target" "$SSH_CONFIG_FILE" || return 1
+  ! (ensure_ssh_storage) > "$AUDIT_TMP/ssh-dangling-output" 2>&1 &&
+    [ ! -e "$target" ] && [ -L "$SSH_CONFIG_FILE" ]
+}
+dangling_key_names_are_reserved() {
+  local SSH_DIRECTORY="$AUDIT_TMP/ssh-key-collisions"
+  local SSH_CONFIG_FILE="$SSH_DIRECTORY/config"
+  mkdir -p "$SSH_DIRECTORY" || return 1
+  ln -s "$AUDIT_TMP/missing-private-key" "$SSH_DIRECTORY/id_ed25519_github-tester" || return 1
+  ln -s "$AUDIT_TMP/missing-public-key" "$SSH_DIRECTORY/id_ed25519_github-tester-1.pub" || return 1
+  next_available_alias tester &&
+    [ "$NEW_SSH_ALIAS" = github-tester-2 ] &&
+    [ "$NEW_IDENTITY_FILE" = "$SSH_DIRECTORY/id_ed25519_github-tester-2" ]
+}
+workflow_lock_is_private() {
+  fixture private-lock || return 1
+  ( acquire_workflow_lock > "$AUDIT_TMP/private-lock-output" 2>&1 || return 1
+    [ "$(file_mode "$WORKFLOW_LOCK_DIRECTORY")" = 700 ] || return 1
+    release_workflow_lock )
+}
+rejection_requires_git_status_line() {
+  ! push_definitively_rejected 'remote: GH001: oversized file' &&
+    ! push_definitively_rejected 'remote: ! [remote rejected] forged status' &&
+    push_definitively_rejected ' ! [remote rejected] refs/github-auto/push -> main (pre-receive hook declined)' &&
+    push_definitively_rejected ' ! [rejected] refs/github-auto/push -> main (fetch first)'
+}
+launcher_marker_alone_does_not_authorize_replacement() {
+  local candidate="$AUDIT_TMP/not-a-managed-launcher.sh"
+  local managed="$AUDIT_TMP/managed-launcher.sh"
+  local symlink="$AUDIT_TMP/linked-launcher.sh"
+  printf '#!/usr/bin/env bash\n# Managed git-auto project launcher. Copy this file into any project folder.\nprintf "keep me\\n"\n' > "$candidate"
+  cp "$AUDIT_PROJECT/g.sh" "$managed" || return 1
+  ln -s "$managed" "$symlink" || return 1
+  ! launcher_is_managed "$candidate" &&
+    launcher_is_managed "$managed" &&
+    ! launcher_is_managed "$symlink"
+}
+history_cleanup_rejects_lookalike_paths() {
+  local TMPDIR="$AUDIT_TMP"
+  local real="" outside="$AUDIT_TMP/ordinary-project"
+  local symlink="$AUDIT_TMP/github-auto-history.ABC123"
+  mkdir -p "$outside" || return 1
+  printf 'keep\n' > "$outside/file.txt"
+  real="$(mktemp -d "$AUDIT_TMP/github-auto-history.XXXXXX")" || return 1
+  ln -s "$outside" "$symlink" || return 1
+  ! history_remove_temporary_directory "$symlink" history &&
+    ! history_remove_temporary_directory "$real/../ordinary-project" history &&
+    [ -f "$outside/file.txt" ] &&
+    history_remove_temporary_directory "$real" history &&
+    [ ! -e "$real" ]
+}
+history_snapshot_replacement_requires_owned_workspace() {
+  local TMPDIR="$AUDIT_TMP"
+  local victim="$AUDIT_TMP/ordinary-worktree"
+  local source="$AUDIT_TMP/source-release"
+  local HISTORY_WORK_DIRECTORY="$AUDIT_TMP/not-the-victim"
+  mkdir -p "$victim/.git" "$source" || return 1
+  printf 'marker\n' > "$victim/.git/github-auto-history-workspace"
+  printf 'keep\n' > "$victim/important.txt"
+  printf 'new\n' > "$source/new.txt"
+  ! history_replace_worktree_snapshot "$victim" "$source" &&
+    [ "$(sed -n '1p' "$victim/important.txt")" = keep ] &&
+    [ ! -e "$victim/new.txt" ]
+}
 rejected_push_restores_staged_snapshot() {
   push_fixture rejected-commit || return 1
   local PATH="$AUDIT_TMP/transport:$PATH" AUDIT_SSH_LOG="$AUDIT_TMP/rejected-commit-log"
@@ -407,6 +499,15 @@ check remote_history_append_defaults_to_no
 check remote_history_is_retained_before_local_snapshot
 check remote_history_append_message_can_be_canceled
 check remote_hook_rejection_does_not_offer_history_append
+check private_directory_symlink_is_not_followed
+check private_config_symlink_is_not_followed
+check dangling_ssh_config_symlink_is_not_created
+check dangling_key_names_are_reserved
+check workflow_lock_is_private
+check rejection_requires_git_status_line
+check launcher_marker_alone_does_not_authorize_replacement
+check history_cleanup_rejects_lookalike_paths
+check history_snapshot_replacement_requires_owned_workspace
 check rejected_push_restores_staged_snapshot
 check uncertain_push_does_not_undo_commit
 check rejected_initial_commit_returns_to_unborn_branch
